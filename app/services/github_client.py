@@ -1,6 +1,6 @@
 import re
 import requests
-
+import math
 
 
 """Function signatures for the future read-only GitHub pull request client."""
@@ -20,15 +20,17 @@ def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     """
     
 
-    pattern = r"^/repos/[^/]+/[^/]+/pulls/\d+$"
+    pattern = r'https://api\.github\.com/repos/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pulls/(?P<pull_number>\d+)'
 
-    if not re.fullmatch(pattern,pr_url):
-        return "PR URL Invalid"
+    match = re.match(pattern, pr_url)
+
+    if match:
+        owner = match.group('owner')
+        repo = match.group('repo')
+        pull_number = match.group('pull_number')
+        return (owner, repo, int(pull_number))
     else:
-        if len(pr_url) >= 5 and pr_url[0] == "repos" and pr_url[3] == "pulls":
-            owner, repo, pull_number = pr_url[1], pr_url[2], pr_url[4]
-            return (owner, repo, pull_number)
-
+        raise ValueError("Invalid URL")
     
 
 
@@ -51,9 +53,6 @@ def fetch_pr_metadata(
     Returns:
         The decoded pull request metadata object.
 
-    Raises:
-        NotImplementedError: Until API requests and error handling are added.
-
     Implement response validation, HTTP/API errors, timeouts, and safe handling
     of credentials yourself.
     """
@@ -61,8 +60,35 @@ def fetch_pr_metadata(
     if not owner or not repo or not pull_number:
         return "Missing Value for owner, repo or pull_number"
 
-    reponse  = requests.get(f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}")
-    print(reponse)
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
+
+    try:
+        reponse  = requests.get(url=url, token=token, timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        return f"Error Calling Github API {e}"
+
+    if reponse.status_code != 200:
+        return f"Github responded with {reponse.json()}"        
+
+    metaData = reponse.json()
+
+    relevantData = {}
+
+    relevantData["title"] = metaData.get("title")
+    relevantData["mergeable_state"] = metaData.get("mergeable_state")
+    relevantData["changed_files"] = metaData.get("changed_files")
+    relevantData["body"] = metaData.get("body")
+    relevantData["base"] = metaData.get("base")
+    relevantData["commits"] = metaData.get("commits")
+    relevantData["additions"] = metaData.get("additions")
+    relevantData["deletions"] = metaData.get("deletions")
+    relevantData["comments"] = metaData.get("comments")
+    relevantData["review_comments"] = metaData.get("review_comments")
+
+    return relevantData
+    
+
+
 
 
 def fetch_pr_files(
@@ -71,6 +97,7 @@ def fetch_pr_files(
     pull_number: int,
     token: str | None = None,
     timeout: float = 10.0,
+    metaData: dict = {}
 ) -> list[dict[str, object]]:
     """Fetch changed-file records from the GitHub REST API.
 
@@ -84,10 +111,50 @@ def fetch_pr_files(
     Returns:
         A list of decoded changed-file objects, including patches when available.
 
-    Raises:
-        NotImplementedError: Until paginated API requests and error handling are
-            added.
-
     Implement pagination, response validation, API errors, and timeouts yourself.
     """
-    raise NotImplementedError("TODO: fetch changed pull request files")
+
+    if not owner or not repo or not pull_number:
+            return "Missing Value for owner, repo or pull_number"
+
+    headers = {
+        "Accept": "application/vnd.github+json"
+    }
+
+    files_patch = []
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
+
+
+    paginations = math.ceil(metaData.get('changed_files')/100) + 1
+
+    for i in range(1,paginations):
+
+        params = {
+        "per_page": 100,
+        "page": i
+        }
+    
+        try:
+            files_edited_reponse = requests.get(url=url, params=params, headers=headers, timeout=timeout)
+
+            files_edited_reponse_json = files_edited_reponse.json()
+
+            for i in files_edited_reponse_json:
+                files_patch.append(i)
+
+        except requests.exceptions.RequestException as e:
+            return f"Error Calling Github API {e}"
+
+    return files_patch
+
+
+# print(fetch_pr_files('mezeru','AI-PR-Review',1, metaData={"changed_files": 1}))
+
+print(parse_pr_url("https://api.github.com/repos/pl/ok/pulls/5/files"))
+
+
+
