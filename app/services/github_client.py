@@ -2,6 +2,8 @@ import re
 import requests
 import math
 import json
+from .pr_normalizer import normalize_pr_data
+from ..agent import review_pull_request
 
 
 """Function signatures for the future read-only GitHub pull request client."""
@@ -189,3 +191,9 @@ def consolidate_pr_data(pr_url: str, token: str | None = None) -> dict[str,objec
     metadata["files"] = file_changes
 
     return metadata
+
+
+if __name__ == "__main__":
+    raw = consolidate_pr_data("https://github.com/mezeru/AI-PR-Review/pull/1")
+    normalized = normalize_pr_data(raw)
+    print(review_pull_request(normalized))

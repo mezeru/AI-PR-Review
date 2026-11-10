@@ -37,4 +37,4 @@ def normalize_pr_data(raw_data: dict) -> PullRequestContext:
         "files": files
     }
 
-    return PullRequestContext
+    return normalized_pr
