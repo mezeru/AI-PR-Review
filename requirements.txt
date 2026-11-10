@@ -1,0 +1,7 @@
+langgraph
+pydantic
+requests
+python-dotenv
+pytest
+
+# Later, select one model provider integration, for example: langchain-openai

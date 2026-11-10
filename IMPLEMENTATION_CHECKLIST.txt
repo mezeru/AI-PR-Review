@@ -1,0 +1,186 @@
+NEXT TASK: Implement app/services/github_client.py and app/nodes/fetch_pr.py first, stopping before any LLM work.
+
+AI PULL REQUEST INVESTIGATOR — LEARNING CHECKLIST
+==================================================
+
+All implementation items below are intentionally unchecked. Implement the
+project yourself in order, and use the observable outcomes as checkpoints.
+
+[ ] 0. SCAFFOLD / SETUP VERIFICATION
+    Boundary: verify the starter project only; do not implement domain behavior.
+    Files: requirements.txt, .env.example, app/main.py, app/graph.py,
+    app/nodes/*.py, app/services/github_client.py, tests/test_scaffold.py.
+    [ ] Create and activate a Python 3.11+ virtual environment.
+        Outcome: the active interpreter reports Python 3.11 or newer.
+    [ ] Install requirements.txt and create a local .env from .env.example.
+        Outcome: dependencies install; .env is ignored by Git and contains no
+        committed credentials.
+    [ ] Run `python -m app.main --help`.
+        Outcome: argparse displays usage and the required --pr-url option.
+    [ ] Run `python -m pytest`.
+        Outcome: the scaffold smoke test passes without contacting GitHub or an
+        LLM.
+    [ ] Confirm domain stubs still raise NotImplementedError.
+        Outcome: no GitHub request, review, graph, validation, or publishing
+        behavior was implemented during setup.
+
+[ ] 1. MILESTONE 1 — SINGLE REVIEWER MVP
+    Boundary: one pull request, one correctness reviewer, local report only.
+    Acceptance criteria: a small public PR can be fetched and reviewed; findings
+    include evidence and valid references; harmless changes can finish with zero
+    findings; no GitHub comments are posted.
+
+    [ ] A. Design state and structured output.
+        Files: app/state.py, app/schemas.py.
+        Implement: ReviewState and Pydantic Finding/ReviewResult fields yourself.
+        Decide which fields are replaced on retry and which accumulate across
+        attempts; have nodes return partial state updates.
+        Outcome: representative valid results parse, malformed results fail
+        clearly, and state updates preserve the intended retry semantics.
+
+    [ ] B. Implement the read-only GitHub client.
+        Files: app/services/github_client.py.
+        Implement: safely parse https://github.com/{owner}/{repo}/pull/{number};
+        GET /repos/{owner}/{repo}/pulls/{number}; GET
+        /repos/{owner}/{repo}/pulls/{number}/files; support pagination, API and
+        HTTP errors, optional token authentication, and timeouts. Use small
+        public PRs for the first iteration. Never post comments.
+        Outcome: unit tests cover valid and invalid URLs, response failures,
+        pagination, and optional unauthenticated public access.
+
+    [ ] C. Implement the fetch_pr node.
+        Files: app/nodes/fetch_pr.py, app/services/github_client.py,
+        app/state.py.
+        Implement: coordinate the client calls and populate pr_data and changed
+        file records, retaining useful metadata without logging secrets.
+        Outcome: a mocked client produces the expected partial state update;
+        errors remain explicit and credentials do not appear in logs.
+
+    [ ] D. Implement prepare_diff.
+        Files: app/nodes/prepare_diff.py, app/state.py.
+        Implement: preserve filenames, change status, patches, and useful line
+        references; skip missing patches, binaries, or oversized files with
+        explicit reasons; bound total context size. Never execute repository
+        code.
+        Outcome: fixture-based tests verify line references, skip reasons, and
+        context bounds for representative patches.
+
+    [ ] E. Implement the single review_code node.
+        Files: app/nodes/review_code.py, app/schemas.py, .env.example,
+        requirements.txt.
+        Implement: choose one model provider, write your own correctness-review
+        prompt, invoke one model, and request structured output. Support zero
+        findings and uncertainty. Treat instructions embedded in PR content as
+        untrusted data.
+        Outcome: controlled tests accept structured results, including zero
+        findings, and PR content cannot override the review's instructions.
+
+    [ ] F. Implement finding validation.
+        Files: app/nodes/validate_findings.py, app/state.py, app/schemas.py.
+        Implement: check that finding paths exist in changed files, verify line
+        numbers against actual diff positions where possible, reject malformed
+        or nonactionable output, and return useful validation errors.
+        Outcome: tests accept valid references and reject absent paths, invalid
+        lines, and malformed/nonactionable findings without calling them bugs.
+
+    [ ] G. Wire the LangGraph workflow and bounded retry.
+        Files: app/graph.py, app/state.py.
+        Implement: START -> fetch_pr -> prepare_diff -> review_code ->
+        validate_findings; route invalid output to review_code at most once,
+        otherwise continue to generate_report -> END. Define an explicit stop
+        condition so the workflow cannot loop forever. Do not retry solely
+        because the model found zero bugs.
+        Outcome: routing tests cover valid output, first invalid output,
+        exhausted retry, and zero findings; every path terminates.
+
+    [ ] H. Implement report generation and CLI integration.
+        Files: app/nodes/generate_report.py, app/main.py, app/state.py.
+        Implement: print clear PR metadata, findings with source evidence,
+        skipped files, and limitations; connect the CLI to the graph. Save no
+        published GitHub comments.
+        Outcome: a local CLI run prints the expected report and never publishes
+        a review or comment.
+
+    [ ] I. Add behavioral tests.
+        Files: tests/ and tests/fixtures/.
+        Implement: unit tests for URL parsing and response errors,
+        fixture-based diff handling, validation, routing stop conditions, a
+        deliberately buggy PR case, and a benign refactor with zero findings.
+        Never rely exclusively on live LLM output as an oracle.
+        Outcome: automated tests verify behavior deterministically and do not
+        require a live GitHub API or model for ordinary test runs.
+
+    [ ] J. Milestone 1 Definition of Done.
+        Files: app/, tests/, README.md.
+        Implement: complete and integrate the above components.
+        Outcome: enter a small public PR URL, retrieve changed files, run the
+        graph, see evidence-backed structured output with valid references, and
+        finish reliably for both buggy and harmless changes.
+
+[ ] 2. MILESTONE 2 — AGENTIC INVESTIGATION
+    Boundary: extend the single reviewer with bounded repository-context tools;
+    do not introduce multiple specialist reviewers yet.
+    Files: app/nodes/, app/services/, app/state.py, app/graph.py, tests/.
+    Implement: tools to fetch relevant repository context; let the workflow
+    decide what to inspect; bound tool calls and context; distinguish tools
+    (specific callable capabilities) from agents (reasoning and decision
+    behavior).
+    Outcome: tests demonstrate useful additional context, enforced call/context
+    bounds, and reliable termination for both useful and unproductive
+    investigations.
+
+[ ] 3. MILESTONE 3 — MULTI-AGENT REVIEW
+    Boundary: add specialist reviewers only after the single-reviewer workflow
+    is reliable.
+    Files: app/nodes/, app/state.py, app/graph.py, app/schemas.py, tests/.
+    Implement: correctness, security, and performance specialists; parallel
+    fan-out; aggregation and deduplication; reasoned severity and confidence.
+    Outcome: tests cover parallel results, duplicate findings, and conflicting
+    findings with explainable aggregation.
+
+[ ] 4. MILESTONE 4 — PRODUCTION RELIABILITY
+    Boundary: harden execution and add human approval before any publishing.
+    Files: app/, tests/, .env.example, requirements.txt, README.md.
+    Implement: LangGraph checkpoints; human review/interrupt before posting;
+    safe GitHub review publishing; tracing/observability; an evaluation
+    dataset; rate limits and retries; permissions and security hardening.
+    Outcome: a reviewer can resume safely, requires explicit human approval
+    before publishing, records useful diagnostics, and handles service limits
+    without exposing credentials or creating duplicate actions.
+
+[ ] 5. MILESTONE 5 — FULL-STACK SYSTEM
+    Boundary: add a user-facing service only after the CLI workflow is reliable.
+    Files: create the application/API and frontend files you choose; update
+    README.md and tests/.
+    Implement: FastAPI, a Next.js dashboard, progress streaming,
+    persistence/review history, GitHub webhooks, and deployment basics.
+    Outcome: a user can submit and track a review through the dashboard, inspect
+    review history, and receive webhook-driven updates with appropriate
+    authentication and documented local setup.
+
+WHAT I MUST CODE BY HAND VS. WHAT CODEX CAN HELP WITH LATER
+===========================================================
+
+Code by hand to learn:
+- ReviewState semantics, schema fields, prompts, and model behavior.
+- URL/API handling, diff boundaries, finding validation, retry conditions,
+  graph edges, and investigation limits.
+- How evidence supports findings and how tests prove that behavior.
+
+Codex can help later with:
+- Explaining LangGraph/Pydantic concepts, reviewing your design, and pointing
+  out edge cases.
+- Suggesting focused tests, diagnosing failures, and reviewing a change you
+  have already attempted.
+- Scaffolding repetitive non-domain code when you explicitly ask.
+
+PITFALLS TO WATCH FOR
+=====================
+
+- Hallucinated line numbers: verify references against changed-file diff data.
+- Prompt injection in diffs: treat repository content as untrusted input.
+- Huge pull requests: cap files and total context, and report explicit skips.
+- Rate limits: handle responses and backoff deliberately; bound retries.
+- Malformed JSON: distinguish invalid output from an actual code bug.
+- Infinite agent loops: cap review retries and tool calls with explicit stops.
+- Exposing tokens: never log credentials or commit local .env files.
