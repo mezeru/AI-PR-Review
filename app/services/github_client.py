@@ -80,10 +80,9 @@ def fetch_pr_metadata(
         reponse  = requests.get(url=url, headers=headers, timeout=timeout)
         reponse.raise_for_status()
     except requests.exceptions.RequestException as e:
-        return f"Error Calling Github API {e}"
-
-    if reponse.status_code != 200:
-        return f"Github responded with {reponse.json()}"        
+        raise RuntimeError(
+                        "Failed to fetch PR files"
+                    ) from e
     
     try:
         metaData = reponse.json()
@@ -93,18 +92,19 @@ def fetch_pr_metadata(
     if not isinstance(metaData, dict):
         raise ValueError("Unexpected GitHub metadata response")
 
-    relevantData: dict | None = None
-    relevantData["title"] = metaData.get("title")
-    relevantData["mergeable_state"] = metaData.get("mergeable_state")
-    relevantData["changed_files"] = metaData.get("changed_files")
-    relevantData["body"] = metaData.get("body")
-    relevantData["commits"] = metaData.get("commits")
-    relevantData["additions"] = metaData.get("additions")
-    relevantData["deletions"] = metaData.get("deletions")
-    relevantData["comments"] = metaData.get("comments")
-    relevantData["review_comments"] = metaData.get("review_comments")
-    relevantData["base_sha"] = metaData.get("base").get("sha")
-    relevantData["head_sha"] = metaData.get("head").get("sha")
+    relevantData = {
+        "title": metaData.get("title"),
+        "mergeable_state": metaData.get("mergeable_state"),
+        "changed_files": metaData.get("changed_files"),
+        "body": metaData.get("body"),
+        "commits": metaData.get("commits"),
+        "additions": metaData.get("additions"),
+        "deletions": metaData.get("deletions"),
+        "comments": metaData.get("comments"),
+        "review_comments": metaData.get("review_comments"),
+        "base_sha": metaData["base"]["sha"],
+        "head_sha": metaData["head"]["sha"]
+    }
 
     return relevantData
 
@@ -175,9 +175,17 @@ def fetch_pr_files(
     return files_patch
 
 
-print(fetch_pr_files('mezeru','AI-PR-Review',1))
-# print(json.dumps(fetch_pr_metadata('mezeru','AI-PR-Review',1)))
-# print(parse_pr_url("https://api.github.com/repos/pl/ok/pulls/5/files"))
+def consolidate_pr_data(pr_url: str, token: str | None = None) -> dict[str,object] :
 
+    if not pr_url or pr_url.strip() == '':
+        raise ValueError("Invalid URL")
 
+    owner, repo, pull_number = parse_pr_url(pr_url)
 
+    metadata = fetch_pr_metadata(owner, repo, pull_number, token=token)
+
+    file_changes = fetch_pr_files(owner, repo, pull_number, token=token)
+
+    metadata["files"] = file_changes
+
+    return metadata
