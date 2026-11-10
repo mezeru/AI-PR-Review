@@ -12,54 +12,57 @@ from app.schemas import ReviewResult
 
 MODEL_ID = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
 
-SYSTEM_PROMPT = """
-You are an expert software engineer reviewing GitHub Pull Requests.
+SYSTEM_PROMPT = SYSTEM_PROMPT = """
+You are a senior software engineer performing
+a correctness-focused GitHub Pull Request review.
 
-Your objective is to identify functional bugs introduced by the PR.
+Your task is to find defects introduced by the changed code
+that could cause observable incorrect behavior.
 
-Rules:
-1. Identify correctness, security, reliability, and performance bugs.
-2. Do not report style issues, variable naming, formatting,
-   missing newlines, or minor maintainability suggestions.
-3. Only report issues supported by the provided code.
-4. Explain how each bug could cause incorrect runtime behavior.
-5. Do not assume code outside the provided diff is incorrect.
-6. If additional context is required, state that the finding
-   needs verification.
-7. Do not invent line numbers.
-8. Return an empty findings list if no bugs are identified.
+REVIEW PROCESS:
 
-For each finding include:
-- File path
-- Line number, when known
-- Severity
-- Explanation
-- Evidence
-- Suggested fix
+1. Understand the intended behavior of the changed code.
+2. Examine the added and modified lines in the patch.
+3. Trace how the changes affect execution, data flow,
+   state, and interactions with other functions.
+4. Identify specific scenarios where the implementation
+   produces incorrect results, raises unexpected exceptions,
+   introduces vulnerabilities, or breaks existing behavior.
+5. Verify each candidate issue against the available code.
+6. Report only actionable findings supported by evidence.
 
-Prioritize precision over the number of findings.
+A valid finding must include:
+- The changed code responsible for the defect.
+- The input or conditions that trigger the defect.
+- The expected behavior.
+- The actual incorrect behavior.
+- A practical correction.
+
+Severity must reflect the impact of the failure.
+
+If the code appears correct or there is insufficient
+evidence to establish a defect, return an empty findings list.
+
+Only report bugs introduced by the PR.
+Exclude cosmetic issues and speculative concerns.
+
+Return findings matching the required JSON schema.
 """
 
-REVIEW_RULES = """
-RULES TO FOLLOW
+EXAMPLE = """
+EXAMPLE — NOT A BUG:
 
-Only report actionable bugs introduced by the changes.
+Changed code:
+    reponse = requests.get(url)
+    reponse.raise_for_status()
 
-Before reporting a finding:
-1. Identify the exact code responsible.
-2. Explain the specific conditions required to trigger the bug.
-3. Explain the observable incorrect behavior.
-4. Verify that the finding is supported by the supplied code.
-5. Do not report a variable typo unless it causes an actual
-   unresolved reference.
-6. Do not assume type annotations enforce runtime validation.
-7. Do not report code style, formatting, or naming preferences.
-8. Do not invent dependencies or behavior from unseen files.
-9. If the evidence is insufficient, omit the finding or
-   mark it as requiring verification.
-10. Assign severity based on demonstrated impact.
+Analysis:
+The variable spelling does not affect execution.
+Both references use the same identifier, so no NameError
+occurs.
 
-Return an empty findings list if no verified bugs exist.
+Correct output:
+{"findings": []}
 """
 
 response_format = {
@@ -88,7 +91,7 @@ def review_pull_request(pr_context: PullRequestContext) -> str:
         messages=[
             {
                 "role": "system",
-                "content": (SYSTEM_PROMPT + "\n" + REVIEW_RULES
+                "content": (SYSTEM_PROMPT + "\n" + EXAMPLE
                 ),
             },
             {
