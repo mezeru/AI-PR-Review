@@ -1,10 +1,10 @@
 from typing import TypedDict, NotRequired
 
 class ChangedFile(TypedDict):
-    fileName: str
+    filename: str
     status: str
-    additions: str
-    deletions: str
+    additions: int
+    deletions: int
     patch: str | None
     previous_filename: NotRequired[str]
 

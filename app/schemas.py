@@ -1,11 +1,22 @@
 """Placeholders for future Pydantic review-result schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class Finding(BaseModel):
     """TODO: Design the structured fields for one actionable review finding."""
 
+class ReviewFinding(BaseModel):
+    file: str
+    line: int| None=None
+    severity: Literal["critical", "high", "medium", "low"]
+    cateogry: Literal["correctness","security","performance","reliability"]
+    explaination: str
+    evidence: str
+    suggested_fix: str
 
 class ReviewResult(BaseModel):
     """TODO: Design the structured output for a complete review."""
+    findings: list[ReviewFinding] = Field(default_factory=list)
+

@@ -79,15 +79,15 @@ def fetch_pr_metadata(
             headers["Authorization"] = f"Bearer {token}"
 
     try:
-        reponse  = requests.get(url=url, headers=headers, timeout=timeout)
-        reponse.raise_for_status()
+        response  = requests.get(url=url, headers=headers, timeout=timeout)
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
         raise RuntimeError(
                         "Failed to fetch PR files"
                     ) from e
     
     try:
-        metaData = reponse.json()
+        metaData = response.json()
     except requests.exceptions.JSONDecodeError as e:
         raise ValueError("Invalid JSON from GitHub") from e
 
@@ -134,7 +134,7 @@ def fetch_pr_files(
     """
 
     if not owner or not repo or not pull_number:
-            return "Missing Value for owner, repo or pull_number"
+            raise ValueError("Missing Value for owner, repo or pull_number")
 
     headers = {
         "Accept": "application/vnd.github+json"
@@ -152,11 +152,11 @@ def fetch_pr_files(
     while url:
     
         try:
-            files_edited_reponse = requests.get(url=url, params=params, headers=headers, timeout=timeout)
+            files_edited_response = requests.get(url=url, params=params, headers=headers, timeout=timeout)
 
-            files_edited_reponse.raise_for_status()
+            files_edited_response.raise_for_status()
 
-            page_files = files_edited_reponse.json()
+            page_files = files_edited_response.json()
 
         except requests.exceptions.RequestException as e:
             raise RuntimeError(
@@ -170,7 +170,7 @@ def fetch_pr_files(
 
         files_patch.extend(page_files)
 
-        url = files_edited_reponse.links.get("next", {}).get("url")
+        url = files_edited_response.links.get("next", {}).get("url")
 
         params = None
 

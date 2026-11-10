@@ -18,8 +18,8 @@ def normalize_pr_data(raw_data: dict) -> PullRequestContext:
         file: ChangedFile = {
             "filename": i["filename"],
             "status": i["status"],
-            "additions": i["additions"],
-            "deletions": i["deletions"],
+            "additions": int(i["additions"]),
+            "deletions": int(i["deletions"]),
             "patch": i.get("patch")
         }
 
