@@ -12,7 +12,7 @@ from app.schemas import ReviewResult
 
 MODEL_ID = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
 
-SYSTEM_PROMPT = SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """
 You are a senior software engineer performing
 a correctness-focused GitHub Pull Request review.
 

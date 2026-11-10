@@ -1,5 +1,22 @@
 from ..models.pr_model import PullRequestContext, ChangedFile
 
+def format_pr_context(pr: PullRequestContext) -> str:
+
+    parts = [
+        f"PR Title: {pr['title']}",
+        f"Description: {pr.get('description') or 'Not provided'}",
+        "",
+        "Changed Files:"
+    ]
+
+    for file in pr["files"]:
+        parts.append(f"\nFile: {file['filename']}")
+        parts.append(f"Status: {file['status']}")
+        parts.append("Patch:")
+        parts.append(file["patch"] or "Patch unavailable")
+
+    return "\n".join(parts)
+
 def normalize_pr_data(raw_data: dict) -> PullRequestContext:
     """
     Convert GitHub PR data into the internal

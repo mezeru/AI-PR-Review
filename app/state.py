@@ -1,15 +1,13 @@
 """Initial state types for the future review workflow."""
 
-from typing import TypedDict
+from typing import TypedDict, NotRequired
+from .models.pr_model import PullRequestContext
+from langgraph.graph import MessagesState
+from .schemas import ReviewResult
 
 
-class ReviewState(TypedDict):
+class ReviewState(MessagesState):
     """Incomplete graph state; decide the final fields and reducers yourself."""
-
     pr_url: str
-    # TODO: pr_data
-    # TODO: files
-    # TODO: findings
-    # TODO: validation_errors
-    # TODO: review_attempts
-    # TODO: final_report
+    pr_context: PullRequestContext
+    final_findings: NotRequired[ReviewResult]

@@ -1,38 +1,30 @@
+"""Read-only GitHub pull request API helpers."""
+
 import re
+
 import requests
-import math
-import json
-from .pr_normalizer import normalize_pr_data
-from ..agent import review_pull_request
-
-
-"""Function signatures for the future read-only GitHub pull request client."""
 
 
 def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
-    """Parse a GitHub pull request URL into owner, repository, and number.
+    """Parse a public GitHub pull request URL.
 
     Args:
-        pr_url: A GitHub pull request URL.
+        pr_url: URL in the form https://github.com/{owner}/{repo}/pull/{number}.
 
     Returns:
-        A tuple of owner, repository name, and pull request number.
+        The repository owner, repository name, and pull request number.
 
     Raises:
-        ValueError: To be raised by the implementation for unsupported URLs.
+        ValueError: If the URL does not match the supported format.
     """
-    
-
     pattern = (
         r"https://github\.com/"
         r"(?P<owner>[^/]+)/"
         r"(?P<repo>[^/]+)/pull/"
-        r"(?P<pull_number>\d+)/?"
+        r"(?P<pull_number>[1-9]\d*)/?"
     )
-
     match = re.fullmatch(pattern, pr_url.strip())
-
-    if not match:
+    if match is None:
         raise ValueError("Invalid GitHub pull request URL")
 
     return (
@@ -40,7 +32,13 @@ def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
         match.group("repo"),
         int(match.group("pull_number")),
     )
-    
+
+
+def _headers(token: str | None) -> dict[str, str]:
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def fetch_pr_metadata(
@@ -50,65 +48,50 @@ def fetch_pr_metadata(
     token: str | None = None,
     timeout: float = 10.0,
 ) -> dict[str, object]:
-    """Fetch pull request metadata from the GitHub REST API.
+    """Fetch metadata for a pull request.
 
-    Args:
-        owner: Repository owner.
-        repo: Repository name.
-        pull_number: Pull request number.
-        token: Optional token for authenticated read access.
-        timeout: Per-request timeout in seconds.
-
-    Returns:
-        The decoded pull request metadata object.
-
-    Implement response validation, HTTP/API errors, timeouts, and safe handling
-    of credentials yourself.
+    Raises:
+        ValueError: If an API response is not valid JSON or has an unexpected
+            structure.
+        RuntimeError: If the GitHub request fails.
     """
-
-    if not owner or not repo or not pull_number:
-        raise ValueError
-
-    headers = {
-            "Accept": "application/vnd.github+json"
-        }
+    if not owner or not repo or pull_number <= 0:
+        raise ValueError("owner, repo, and a positive pull_number are required")
 
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
-
-    if token:
-            headers["Authorization"] = f"Bearer {token}"
-
     try:
-        response  = requests.get(url=url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=_headers(token), timeout=timeout)
         response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(
-                        "Failed to fetch PR files"
-                    ) from e
-    
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError("Failed to fetch pull request metadata") from exc
+
     try:
-        metaData = response.json()
-    except requests.exceptions.JSONDecodeError as e:
-        raise ValueError("Invalid JSON from GitHub") from e
+        data = response.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise ValueError("GitHub returned invalid JSON for pull request metadata") from exc
 
-    if not isinstance(metaData, dict):
-        raise ValueError("Unexpected GitHub metadata response")
+    if not isinstance(data, dict):
+        raise ValueError("Unexpected GitHub pull request metadata response")
 
-    relevantData = {
-        "title": metaData.get("title"),
-        "mergeable_state": metaData.get("mergeable_state"),
-        "changed_files": metaData.get("changed_files"),
-        "body": metaData.get("body"),
-        "commits": metaData.get("commits"),
-        "additions": metaData.get("additions"),
-        "deletions": metaData.get("deletions"),
-        "comments": metaData.get("comments"),
-        "review_comments": metaData.get("review_comments"),
-        "base_sha": metaData["base"]["sha"],
-        "head_sha": metaData["head"]["sha"]
+    try:
+        base = data["base"]["sha"]
+        head = data["head"]["sha"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("GitHub metadata is missing base/head commit SHAs") from exc
+
+    return {
+        "title": data.get("title"),
+        "mergeable_state": data.get("mergeable_state"),
+        "changed_files": data.get("changed_files"),
+        "body": data.get("body"),
+        "commits": data.get("commits"),
+        "additions": data.get("additions"),
+        "deletions": data.get("deletions"),
+        "comments": data.get("comments"),
+        "review_comments": data.get("review_comments"),
+        "base_sha": base,
+        "head_sha": head,
     }
-
-    return relevantData
 
 
 def fetch_pr_files(
@@ -116,84 +99,58 @@ def fetch_pr_files(
     repo: str,
     pull_number: int,
     token: str | None = None,
-    timeout: float = 10.0
+    timeout: float = 10.0,
 ) -> list[dict[str, object]]:
-    """Fetch changed-file records from the GitHub REST API.
+    """Fetch all changed-file records, following GitHub's pagination links.
 
-    Args:
-        owner: Repository owner.
-        repo: Repository name.
-        pull_number: Pull request number.
-        token: Optional token for authenticated read access.
-        timeout: Per-request timeout in seconds.
-
-    Returns:
-        A list of decoded changed-file objects, including patches when available.
-
-    Implement pagination, response validation, API errors, and timeouts yourself.
+    Raises:
+        ValueError: If an API response is invalid or has an unexpected structure.
+        RuntimeError: If a GitHub request fails.
     """
+    if not owner or not repo or pull_number <= 0:
+        raise ValueError("owner, repo, and a positive pull_number are required")
 
-    if not owner or not repo or not pull_number:
-            raise ValueError("Missing Value for owner, repo or pull_number")
-
-    headers = {
-        "Accept": "application/vnd.github+json"
-    }
-
-    files_patch = []
-
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
-
-    params = {"per_page": 100}
+    url: str | None = (
+        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
+    )
+    params: dict[str, int] | None = {"per_page": 100}
+    files: list[dict[str, object]] = []
 
     while url:
-    
         try:
-            files_edited_response = requests.get(url=url, params=params, headers=headers, timeout=timeout)
-
-            files_edited_response.raise_for_status()
-
-            page_files = files_edited_response.json()
-
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(
-                "Failed to fetch PR files"
-            ) from e
-
-        if not isinstance(page_files, list):
-            raise ValueError(
-                "Unexpected GitHub files response"
+            response = requests.get(
+                url,
+                params=params,
+                headers=_headers(token),
+                timeout=timeout,
             )
+            response.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError("Failed to fetch pull request files") from exc
 
-        files_patch.extend(page_files)
+        try:
+            page = response.json()
+        except requests.exceptions.JSONDecodeError as exc:
+            raise ValueError("GitHub returned invalid JSON for pull request files") from exc
 
-        url = files_edited_response.links.get("next", {}).get("url")
+        if not isinstance(page, list) or not all(
+            isinstance(item, dict) for item in page
+        ):
+            raise ValueError("Unexpected GitHub pull request files response")
 
+        files.extend(page)
+        url = response.links.get("next", {}).get("url")
         params = None
 
-    return files_patch
+    return files
 
 
-def consolidate_pr_data(pr_url: str, token: str | None = None) -> dict[str,object] :
-
-    if not pr_url or pr_url.strip() == '':
-        raise ValueError("Invalid URL")
-
+def consolidate_pr_data(
+    pr_url: str,
+    token: str | None = None,
+) -> dict[str, object]:
+    """Fetch pull request metadata and changed files from a GitHub URL."""
     owner, repo, pull_number = parse_pr_url(pr_url)
-
     metadata = fetch_pr_metadata(owner, repo, pull_number, token=token)
-
-    file_changes = fetch_pr_files(owner, repo, pull_number, token=token)
-
-    metadata["files"] = file_changes
-
+    metadata["files"] = fetch_pr_files(owner, repo, pull_number, token=token)
     return metadata
-
-
-if __name__ == "__main__":
-    raw = consolidate_pr_data("https://github.com/mezeru/AI-PR-Review/pull/1")
-    normalized = normalize_pr_data(raw)
-    print(review_pull_request(normalized))
