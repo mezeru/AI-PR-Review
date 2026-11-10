@@ -1,6 +1,7 @@
 import re
 import requests
 import math
+import json
 
 
 """Function signatures for the future read-only GitHub pull request client."""
@@ -20,17 +21,23 @@ def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     """
     
 
-    pattern = r'https://api\.github\.com/repos/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pulls/(?P<pull_number>\d+)'
+    pattern = (
+        r"https://github\.com/"
+        r"(?P<owner>[^/]+)/"
+        r"(?P<repo>[^/]+)/pull/"
+        r"(?P<pull_number>\d+)/?"
+    )
 
-    match = re.match(pattern, pr_url)
+    match = re.fullmatch(pattern, pr_url.strip())
 
-    if match:
-        owner = match.group('owner')
-        repo = match.group('repo')
-        pull_number = match.group('pull_number')
-        return (owner, repo, int(pull_number))
-    else:
-        raise ValueError("Invalid URL")
+    if not match:
+        raise ValueError("Invalid GitHub pull request URL")
+
+    return (
+        match.group("owner"),
+        match.group("repo"),
+        int(match.group("pull_number")),
+    )
     
 
 
@@ -58,37 +65,48 @@ def fetch_pr_metadata(
     """
 
     if not owner or not repo or not pull_number:
-        return "Missing Value for owner, repo or pull_number"
+        raise ValueError
+
+    headers = {
+            "Accept": "application/vnd.github+json"
+        }
 
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
 
+    if token:
+            headers["Authorization"] = f"Bearer {token}"
+
     try:
-        reponse  = requests.get(url=url, token=token, timeout=timeout)
+        reponse  = requests.get(url=url, headers=headers, timeout=timeout)
+        reponse.raise_for_status()
     except requests.exceptions.RequestException as e:
         return f"Error Calling Github API {e}"
 
     if reponse.status_code != 200:
         return f"Github responded with {reponse.json()}"        
+    
+    try:
+        metaData = reponse.json()
+    except requests.exceptions.JSONDecodeError as e:
+        raise ValueError("Invalid JSON from GitHub") from e
 
-    metaData = reponse.json()
+    if not isinstance(metaData, dict):
+        raise ValueError("Unexpected GitHub metadata response")
 
-    relevantData = {}
-
+    relevantData: dict | None = None
     relevantData["title"] = metaData.get("title")
     relevantData["mergeable_state"] = metaData.get("mergeable_state")
     relevantData["changed_files"] = metaData.get("changed_files")
     relevantData["body"] = metaData.get("body")
-    relevantData["base"] = metaData.get("base")
     relevantData["commits"] = metaData.get("commits")
     relevantData["additions"] = metaData.get("additions")
     relevantData["deletions"] = metaData.get("deletions")
     relevantData["comments"] = metaData.get("comments")
     relevantData["review_comments"] = metaData.get("review_comments")
+    relevantData["base_sha"] = metaData.get("base").get("sha")
+    relevantData["head_sha"] = metaData.get("head").get("sha")
 
     return relevantData
-    
-
-
 
 
 def fetch_pr_files(
@@ -96,8 +114,7 @@ def fetch_pr_files(
     repo: str,
     pull_number: int,
     token: str | None = None,
-    timeout: float = 10.0,
-    metaData: dict = {}
+    timeout: float = 10.0
 ) -> list[dict[str, object]]:
     """Fetch changed-file records from the GitHub REST API.
 
@@ -128,33 +145,39 @@ def fetch_pr_files(
 
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
 
+    params = {"per_page": 100}
 
-    paginations = math.ceil(metaData.get('changed_files')/100) + 1
-
-    for i in range(1,paginations):
-
-        params = {
-        "per_page": 100,
-        "page": i
-        }
+    while url:
     
         try:
             files_edited_reponse = requests.get(url=url, params=params, headers=headers, timeout=timeout)
 
-            files_edited_reponse_json = files_edited_reponse.json()
+            files_edited_reponse.raise_for_status()
 
-            for i in files_edited_reponse_json:
-                files_patch.append(i)
+            page_files = files_edited_reponse.json()
 
         except requests.exceptions.RequestException as e:
-            return f"Error Calling Github API {e}"
+            raise RuntimeError(
+                "Failed to fetch PR files"
+            ) from e
+
+        if not isinstance(page_files, list):
+            raise ValueError(
+                "Unexpected GitHub files response"
+            )
+
+        files_patch.extend(page_files)
+
+        url = files_edited_reponse.links.get("next", {}).get("url")
+
+        params = None
 
     return files_patch
 
 
-# print(fetch_pr_files('mezeru','AI-PR-Review',1, metaData={"changed_files": 1}))
-
-print(parse_pr_url("https://api.github.com/repos/pl/ok/pulls/5/files"))
+print(fetch_pr_files('mezeru','AI-PR-Review',1))
+# print(json.dumps(fetch_pr_metadata('mezeru','AI-PR-Review',1)))
+# print(parse_pr_url("https://api.github.com/repos/pl/ok/pulls/5/files"))
 
 
 
