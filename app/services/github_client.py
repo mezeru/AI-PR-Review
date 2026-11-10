@@ -1,3 +1,8 @@
+import re
+import requests
+
+
+
 """Function signatures for the future read-only GitHub pull request client."""
 
 
@@ -13,7 +18,18 @@ def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     Raises:
         ValueError: To be raised by the implementation for unsupported URLs.
     """
-    raise NotImplementedError("TODO: implement safe pull request URL parsing")
+    
+
+    pattern = r"^/repos/[^/]+/[^/]+/pulls/\d+$"
+
+    if not re.fullmatch(pattern,pr_url):
+        return "PR URL Invalid"
+    else:
+        if len(pr_url) >= 5 and pr_url[0] == "repos" and pr_url[3] == "pulls":
+            owner, repo, pull_number = pr_url[1], pr_url[2], pr_url[4]
+            return (owner, repo, pull_number)
+
+    
 
 
 def fetch_pr_metadata(
@@ -41,7 +57,12 @@ def fetch_pr_metadata(
     Implement response validation, HTTP/API errors, timeouts, and safe handling
     of credentials yourself.
     """
-    raise NotImplementedError("TODO: fetch pull request metadata")
+
+    if not owner or not repo or not pull_number:
+        return "Missing Value for owner, repo or pull_number"
+
+    reponse  = requests.get(f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}")
+    print(reponse)
 
 
 def fetch_pr_files(
