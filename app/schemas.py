@@ -11,8 +11,8 @@ class ReviewFinding(BaseModel):
     file: str
     line: int| None=None
     severity: Literal["critical", "high", "medium", "low"]
-    cateogry: Literal["correctness","security","performance","reliability"]
-    explaination: str
+    category: Literal["correctness","security","performance","reliability"]
+    explanation: str
     evidence: str
     suggested_fix: str
 
