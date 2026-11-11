@@ -1,12 +1,14 @@
 """Read-only GitHub pull request API helpers."""
 
+from __future__ import annotations
+
 import re
 import base64
 import requests
 from urllib.parse import quote
 from collections.abc import Mapping
 from typing import Literal, TypedDict
-from app.state import PullRequestContext
+from app.models.pr_model import PullRequestContext
 from app.schemas import ReviewFinding
 
 
@@ -402,3 +404,41 @@ def verify_finding_location(
         "verified": verified,
     }
 
+def get_file(
+    owner: str,
+    repo: str,
+    source: str,
+    fileName: str,
+    token: str,
+    timeout: float = 10.0,
+) -> str:
+    """Fetch a repository file's raw text from GitHub."""
+    if not owner or not repo or not fileName:
+        raise ValueError("owner, repo, and fileName are required")
+    path = "/".join(
+        part.strip("/")
+        for part in (source, fileName)
+        if part.strip("/")
+    )
+    if (
+        not path
+        or "\\" in path
+        or any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        raise ValueError("Invalid file path")
+
+    url = (
+        f"https://api.github.com/repos/{quote(owner, safe='')}/"
+        f"{quote(repo, safe='')}/contents/{quote(path, safe='/')}"
+    )
+
+    headers = {"Accept": "application/vnd.github.raw"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError("Failed to fetch file from GitHub") from exc
+
+    return response.text

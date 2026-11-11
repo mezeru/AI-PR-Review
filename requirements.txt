@@ -3,6 +3,7 @@ langchain
 langfuse
 pydantic
 requests
+tree-sitter-language-pack
 python-dotenv
 huggingface_hub
 pytest

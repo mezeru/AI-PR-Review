@@ -89,10 +89,10 @@ review with no actionable findings returns an empty `findings` array.
   and unified-diff location checks.
 - `app/services/pr_normalizer.py` — converts GitHub API data to the internal PR
   context and review prompt.
+- `app/rag/` — language-aware code chunking with bounded text fallback.
 - `app/schemas.py` — Pydantic finding and review-result schemas.
 - `app/state.py` — graph state types.
 - `app/tools/fetch_file_tool.py` — bounded source-context tool exposed to the
   model.
 - `tests/` — project tests.
-
 
