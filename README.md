@@ -1,4 +1,4 @@
-# AI Pull Request Investigator
+# AI PR Reviewer
 
 AI Pull Request Investigator is a Python command-line tool that reviews a
 GitHub pull request for actionable defects introduced by its changes. It uses
