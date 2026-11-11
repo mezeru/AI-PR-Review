@@ -9,6 +9,9 @@ from app.services.github_client import consolidate_pr_data
 from app.services.pr_normalizer import normalize_pr_data
 
 
+from app.services.github_client import fetch_file_lines
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv()
     """Ask for a pull request URL, fetch it, normalize it, and run a review."""

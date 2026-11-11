@@ -11,10 +11,20 @@ def validate_findings(state: ReviewState) -> dict[str, object]:
     Implement validation and useful error reporting yourself.
     """
 
-    last_message = state['messages'][-1]
+    last_message = state["messages"][-1]
 
-    result = ReviewResult.model_validate_json(last_message.content)
+    if last_message.tool_calls:
+        raise RuntimeError(
+            "Cannot finalize a response containing tool calls"
+        )
 
-    return {
-        "final_findings": result
-    }
+    if not isinstance(last_message.content, str) or not last_message.content.strip():
+        raise RuntimeError(
+            "LLM completed without returning review JSON"
+        )
+
+    result = ReviewResult.model_validate_json(
+        last_message.content
+    )
+
+    return {"final_findings": result}

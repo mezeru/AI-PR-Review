@@ -4,6 +4,7 @@ from typing import TypedDict, NotRequired
 from .models.pr_model import PullRequestContext
 from langgraph.graph import MessagesState
 from .schemas import ReviewResult
+from app.services.github_client import FindingLocationVerification
 
 
 class ReviewState(MessagesState):
@@ -11,3 +12,6 @@ class ReviewState(MessagesState):
     pr_url: str
     pr_context: PullRequestContext
     final_findings: NotRequired[ReviewResult]
+    location_verifications: NotRequired[
+        list[FindingLocationVerification]
+    ]

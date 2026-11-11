@@ -1,78 +1,98 @@
 # AI Pull Request Investigator
 
-A learning-focused Python CLI scaffold for a future pull request investigator.
-The eventual Milestone 1 application will fetch a public GitHub pull request,
-prepare its changed-file context, run one correctness reviewer through
-LangGraph, validate structured findings, and print a local report.
+AI Pull Request Investigator is a Python command-line tool that reviews a
+GitHub pull request for actionable defects introduced by its changes. It uses
+GitHub's API to load the pull request, a Qwen code-review model hosted through
+Hugging Face Inference Providers to analyze it, and LangGraph to coordinate
+model and tool calls.
 
-## Milestone 1 flow
+## Features
 
-The planned flow is:
+- Accepts a GitHub pull request URL and loads its metadata and changed files.
+- Builds review context from the PR description and unified diffs.
+- Runs a correctness-focused review with structured findings:
+  severity, category, file, line, explanation, evidence, and suggested fix.
+- Lets the model request additional source context from the PR's head revision.
+  Each request is limited to 150 lines, and the graph allows at most five tool
+  calls per review.
+- Validates the final JSON response with Pydantic.
+- Checks whether each finding points to a changed file and a line present in
+  that file's patch, identifying added lines versus context lines.
+- Prints the validated findings as JSON in the terminal.
+- Integrates a Langfuse callback for graph tracing when configured.
 
-1. Fetch pull request metadata and changed files.
-2. Prepare bounded diff context.
-3. Ask one LLM to review correctness.
-4. Validate the returned findings, with a bounded retry for invalid output.
-5. Generate a local report.
+Location verification confirms that a finding points into the changed diff; it
+does not independently prove that the finding is a real defect.
 
-Fetching, diff preparation, validation, and report generation are deterministic
-nodes: they apply explicit program logic to inputs and outputs. The review node
-is different because it will ask a language model to reason about the prepared
-code changes. No node or graph behavior is implemented yet.
+## Review workflow
 
-## Project map
+The graph starts with the model review. If the model requests source context,
+LangGraph runs the GitHub file-context tool and returns its result to the
+reviewer. When the tool-call budget is exhausted, the reviewer is asked to
+finalize using the evidence already gathered. The final response is validated
+and its finding locations are checked before the CLI prints the result.
 
-- `app/main.py` — minimal command-line entry point.
-- `app/graph.py` and `app/state.py` — future workflow construction and state.
-- `app/schemas.py` — placeholders for future Pydantic output models.
-- `app/nodes/` — one stub per planned workflow step.
-- `app/services/github_client.py` — signatures for future read-only GitHub access.
-- `tests/` — importability and scaffold smoke test only.
-- [`IMPLEMENTATION_CHECKLIST.txt`](./IMPLEMENTATION_CHECKLIST.txt) — step-by-step
-  implementation plan; all work remains unchecked.
+![LangGraph review workflow](review+graph.png)
 
-## Setup
+## Requirements and setup
 
-Create and activate a Python 3.11+ virtual environment, then install the listed
+- Python 3.11 or newer
+- A Hugging Face access token with access to the configured inference provider
+- Optional: a GitHub token for authenticated API requests (for example, to
+  access private repositories or increase API rate limits)
+
+Create and activate a virtual environment, then install the project
 dependencies:
 
-```text
+```powershell
 python -m venv .venv
-```
-
-On Windows, activate it with:
-
-```text
 .\.venv\Scripts\Activate.ps1
-```
-
-Then install dependencies and prepare local settings:
-
-```text
 python -m pip install -r requirements.txt
-copy .env.example .env
 ```
 
-No dependency installation or API access is performed by this scaffold. The
-environment file is optional for public pull requests; do not put real
-credentials in tracked files.
-
-## Current behavior
-
-The CLI help is available with:
+Set credentials in your shell or a local, untracked `.env` file:
 
 ```text
-python -m app.main --help
+HF_TOKEN=your_hugging_face_token
+GITHUB_TOKEN=your_github_token
 ```
 
-Invoking the CLI with `--pr-url` prints that review is not implemented and
-returns a nonzero exit status. GitHub fetching, graph construction, prompts,
-model calls, finding validation, retry routing, report generation, and GitHub
-publishing are intentionally unfinished. The domain functions raise
-`NotImplementedError`; this scaffold must not be used to review a real PR.
+`HF_TOKEN` is required. `GITHUB_TOKEN` is optional for public pull requests.
+Never commit credentials.
 
-Run the scaffold smoke tests after installing the requirements:
+## Run a review
 
-```text
-python -m pytest
+Pass the PR URL directly:
+
+```powershell
+python -m app.main --pr-url https://github.com/owner/repository/pull/123
 ```
+
+Or omit `--pr-url` to be prompted for it:
+
+```powershell
+python -m app.main
+```
+
+The command prints the validated `ReviewResult` as formatted JSON. A successful
+review with no actionable findings returns an empty `findings` array.
+
+## Project structure
+
+- `app/main.py` — CLI argument handling and review entry point.
+- `app/graph.py` — LangGraph workflow, tool-call routing, and call budget.
+- `app/agent.py` — model prompt, Hugging Face inference request, and response
+  conversion.
+- `app/nodes/` — review, finalization, validation, budget handling, and location
+  verification nodes.
+- `app/services/github_client.py` — GitHub API requests, source-line fetching,
+  and unified-diff location checks.
+- `app/services/pr_normalizer.py` — converts GitHub API data to the internal PR
+  context and review prompt.
+- `app/schemas.py` — Pydantic finding and review-result schemas.
+- `app/state.py` — graph state types.
+- `app/tools/fetch_file_tool.py` — bounded source-context tool exposed to the
+  model.
+- `tests/` — project tests.
+
+
