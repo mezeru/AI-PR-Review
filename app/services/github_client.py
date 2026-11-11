@@ -409,20 +409,24 @@ def get_file(
     repo: str,
     source: str,
     fileName: str,
-    token: str,
+    token: str | None,
     timeout: float = 10.0,
+    *,
+    ref: str | None = None,
 ) -> str:
-    """Fetch a repository file's raw text from GitHub."""
+    """Fetch a repository file's raw UTF-8 text, optionally at a specific ref."""
     if not owner or not repo or not fileName:
         raise ValueError("owner, repo, and fileName are required")
-    path = "/".join(
-        part.strip("/")
-        for part in (source, fileName)
-        if part.strip("/")
-    )
+    if any(part in (".", "..") for part in (owner, repo)):
+        raise ValueError("Invalid repository name or owner")
+    if ref is not None and not ref.strip():
+        raise ValueError("ref must be nonempty when supplied")
+
+    directory = source.strip("/")
+    path = f"{directory}/{fileName}" if directory else fileName
     if (
-        not path
-        or "\\" in path
+        "\\" in path
+        or "\0" in path
         or any(part in ("", ".", "..") for part in path.split("/"))
     ):
         raise ValueError("Invalid file path")
@@ -432,13 +436,21 @@ def get_file(
         f"{quote(repo, safe='')}/contents/{quote(path, safe='/')}"
     )
 
-    headers = {"Accept": "application/vnd.github.raw"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    raw_media_type = "application/vnd.github.raw"
+    headers = _headers(token)
+    headers["Accept"] = raw_media_type
     try:
-        response = requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(
+            url,
+            headers=headers,
+            params={"ref": ref} if ref is not None else None,
+            timeout=timeout,
+        )
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
         raise RuntimeError("Failed to fetch file from GitHub") from exc
 
-    return response.text
+    media_type = response.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+    if media_type != raw_media_type:
+        raise ValueError("GitHub did not return raw file content")
+    return response.content.decode("utf-8")

@@ -77,6 +77,43 @@ python -m app.main
 The command prints the validated `ReviewResult` as formatted JSON. A successful
 review with no actionable findings returns an empty `findings` array.
 
+## Chunk files at a pull request revision
+
+Supply repository-relative text file paths from the revision you want to ingest.
+Each request uses the PR's head SHA, and the returned batch carries its repository
+owner, name, and SHA.
+
+```python
+from app.rag.ingestion import chunk_pr_files
+from app.services.github_client import consolidate_pr_data
+from app.services.pr_normalizer import normalize_pr_data
+
+pr_url = "https://github.com/owner/repository/pull/123"
+pr_context = normalize_pr_data(consolidate_pr_data(pr_url))
+paths = ["src/service.py", "web/View.tsx", "config.yaml"]
+batch = chunk_pr_files(pr_url, pr_context, paths)
+
+for chunk in batch.chunks:
+    print(
+        chunk["filename"], chunk["language"], chunk["symbol"],
+        chunk["start_line"], chunk["end_line"], chunk["parse_status"],
+    )
+```
+
+The default limits are 100 lines and 8,000 characters per chunk, with up to 10
+lines of overlap within a symbol or a class context region. An oversized line
+can span multiple chunks with the same line number. Parse status applies to the
+whole file. Unsupported extensions and parser failures use bounded text chunks.
+
+The language pack may download grammars on first use. With a version that
+downloads grammars on demand, prime its cache before running the chunking tests
+offline:
+
+```powershell
+python -c "from tree_sitter_language_pack import prefetch; prefetch(['python', 'javascript', 'typescript', 'tsx', 'java'])"
+python -m pytest -q tests/test_chunker.py tests/test_rag_ingestion.py
+```
+
 ## Project structure
 
 - `app/main.py` — CLI argument handling and review entry point.
