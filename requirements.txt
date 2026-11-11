@@ -1,4 +1,6 @@
 langgraph
+langchain
+langfuse
 pydantic
 requests
 python-dotenv
