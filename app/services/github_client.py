@@ -1,7 +1,9 @@
 """Read-only GitHub pull request API helpers."""
 
 import re
-
+import base64
+import requests
+from urllib.parse import quote
 import requests
 
 
@@ -154,3 +156,82 @@ def consolidate_pr_data(
     metadata = fetch_pr_metadata(owner, repo, pull_number, token=token)
     metadata["files"] = fetch_pr_files(owner, repo, pull_number, token=token)
     return metadata
+
+MAX_LINES = 150
+MAX_FILE_BYTES = 500_000
+
+def fetch_file_lines(
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str,
+    start_line: int,
+    end_line: int,
+    token: str | None = None,
+    timeout: float = 10.0,
+) -> str:
+
+    if(start_line < 1 or end_line < start_line or end_line - start_line + 1 > MAX_LINES):
+        raise ValueError("Invalid or oversized line range, Max lines that should be fetched are 150")
+
+    if (
+    not path
+    or "\\" in path
+    or any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        raise ValueError("Invalid file path")
+
+    url = (
+        f"https://api.github.com/repos/"
+        f"{quote(owner, safe='')}/{quote(repo, safe='')}"
+        f"/contents/{quote(path, safe='/')}"
+    )
+
+    headers = {"Accept": "application/vnd.github+json"}
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    response = requests.get(
+        url,
+        headers=headers,
+        params={"ref": ref},
+        timeout=timeout
+    )
+    response.raise_for_status()
+
+    data = response.json()
+
+    if not isinstance(data, dict) or data.get("type") != "file":
+        raise ValueError("Expected a file")
+
+    if data.get("size", 0) > MAX_FILE_BYTES:
+        raise ValueError("File too large")
+
+    if data.get("encoding") != "base64":
+        raise ValueError("Unsupported file encoding")
+
+    encoded = data.get("content")
+    if not isinstance(encoded, str):
+        raise ValueError("File content is unavailable")
+
+    content = base64.b64decode(encoded)
+    if len(content) > MAX_FILE_BYTES:
+        raise ValueError("File too large")
+
+    text = content.decode("utf-8")
+    lines = text.splitlines()
+
+    # 6. Extract requested lines
+    if start_line > len(lines):
+        raise ValueError("Start line exceeds file length")
+
+    selected = lines[start_line - 1:end_line]
+
+    return "\n".join(
+        f"{number}: {line}"
+        for number, line in enumerate(selected, start=start_line)
+    )
+
+
+

@@ -11,3 +11,4 @@ class ReviewState(MessagesState):
     pr_url: str
     pr_context: PullRequestContext
     final_findings: NotRequired[ReviewResult]
+    is_final: bool

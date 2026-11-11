@@ -5,14 +5,28 @@ import os
 from huggingface_hub import InferenceClient
 from app.models.pr_model import PullRequestContext
 from app.schemas import ReviewResult
+from langchain_core.utils.function_calling import (
+    convert_to_openai_tool
+)
+from app.tools.fetch_file_tool import get_file_context
+from langchain_core.messages import AIMessage
 
 
-
+tool_schema = convert_to_openai_tool(get_file_context)
 
 
 MODEL_ID = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
 
-SYSTEM_PROMPT = """
+response_format = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "ReviewResult",
+        "schema": ReviewResult.model_json_schema(),
+        "strict": True
+    }
+}
+
+SYSTEM_PROMPT = f"""
 You are a senior software engineer performing
 a correctness-focused GitHub Pull Request review.
 
@@ -65,19 +79,26 @@ Correct output:
 {"findings": []}
 """
 
-response_format = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "ReviewResult",
-        "schema": ReviewResult.model_json_schema(),
-        "strict": True
-    }
-}
+FINAL_PROMPT = """
+You are finalizing a GitHub Pull Request review.
+
+Using the investigation and tool results provided:
+
+1. Identify only actionable, evidence-supported bugs.
+2. Discard speculative or disproven findings.
+3. Do not invent bugs or line numbers.
+4. Do not request additional tools or information.
+5. Produce a JSON response matching the required schema.
+6. If no genuine bugs are found, return {"findings": []}.
+
+Do not include Markdown or additional commentary.
+"""
 
 
-def review_pull_request(pr_context: PullRequestContext) -> str:
+def review_pull_request(messages = [], is_final: bool = False) -> AIMessage:
     """Review normalized pull request data and return the model's response."""
     token = os.getenv("HF_TOKEN")
+
     if not token:
         raise RuntimeError("HF_TOKEN is required to run the model review.")
 
@@ -85,32 +106,62 @@ def review_pull_request(pr_context: PullRequestContext) -> str:
         provider="featherless-ai",
         token=token
     )
-    response = client.chat.completions.create(
-        model=MODEL_ID,
-        messages=[
-            {
-                "role": "system",
-                "content": (SYSTEM_PROMPT + "\n" + EXAMPLE
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Review this pull request context for correctness bugs:\n"
-                    f"{json.dumps(pr_context, ensure_ascii=False)}"
-                ),
-            },
-        ],
-        max_tokens=800,
-        temperature=0.1,
-        response_format=response_format
+
+    if is_final:
+        response = client.chat.completions.create(
+                model=MODEL_ID,
+                messages=[
+                    {"role": "system", "content": FINAL_PROMPT},
+                    *messages
+                ],
+                max_tokens=800,
+                temperature=0.1,
+                response_format=response_format
+                
+            )
+    else:
+
+        response = client.chat.completions.create(
+            model=MODEL_ID,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *messages
+            ],
+            max_tokens=800,
+            temperature=0.1,
+            tools=[tool_schema],
+            tool_choice='auto'
+            
+        )
+
+    return convert_hf_response(response)
+
+def convert_hf_response(response) -> AIMessage:
+
+    hf_message = response.choices[0].message
+
+    tool_calls = []
+
+    for call in hf_message.tool_calls or []:
+
+        arguments = call.function.arguments
+
+        # Some provider responses use JSON strings,
+        # others expose decoded dictionaries.
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
+
+        if not isinstance(arguments, dict):
+            raise ValueError("Invalid tool arguments")
+
+        tool_calls.append({
+            "name": call.function.name,
+            "args": arguments,
+            "id": call.id,
+            "type": "tool_call"
+        })
+
+    return AIMessage(
+        content=hf_message.content or "",
+        tool_calls=tool_calls
     )
-
-    if not response.choices:
-        raise RuntimeError("The model returned no response choices.")
-
-    content = response.choices[0].message.content
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("The model returned an empty or non-text response.")
-
-    return content
