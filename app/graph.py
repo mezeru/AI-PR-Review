@@ -6,9 +6,12 @@ from langgraph.graph import StateGraph, START, END
 from app.state import ReviewState
 from app.nodes.review_code import review_agent
 from app.nodes.validate_findings import validate_findings
+from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 
-"""Placeholder for the future LangGraph review workflow."""
 
+langfuse = get_client()
+langfuse_handler = CallbackHandler()
 
 def build_graph():
     """Build the review graph.
@@ -54,4 +57,15 @@ def run_review(pr_url, normalized_pr):
 
     graph = build_graph()
 
-    return graph.invoke(initial_state)
+    try:
+        result = graph.invoke(initial_state, config={
+            "callbacks": [langfuse_handler]
+        })
+
+        return result
+
+    finally:
+        langfuse.flush()
+
+
+    

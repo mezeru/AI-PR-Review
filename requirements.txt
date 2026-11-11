@@ -2,6 +2,7 @@ langgraph
 pydantic
 requests
 python-dotenv
+huggingface_hub
 pytest
 
 # Later, select one model provider integration, for example: langchain-openai

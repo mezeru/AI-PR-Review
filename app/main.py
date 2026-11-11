@@ -3,13 +3,14 @@
 import argparse
 from collections.abc import Sequence
 import sys
-
+from dotenv import load_dotenv
 from app.graph import run_review
 from app.services.github_client import consolidate_pr_data
 from app.services.pr_normalizer import normalize_pr_data
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_dotenv()
     """Ask for a pull request URL, fetch it, normalize it, and run a review."""
     parser = argparse.ArgumentParser(
         description="Review a GitHub pull request."

@@ -2,12 +2,12 @@
 
 import json
 import os
-
-from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
-
 from app.models.pr_model import PullRequestContext
 from app.schemas import ReviewResult
+
+
+
 
 
 MODEL_ID = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
@@ -77,7 +77,6 @@ response_format = {
 
 def review_pull_request(pr_context: PullRequestContext) -> str:
     """Review normalized pull request data and return the model's response."""
-    load_dotenv()
     token = os.getenv("HF_TOKEN")
     if not token:
         raise RuntimeError("HF_TOKEN is required to run the model review.")
