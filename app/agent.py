@@ -80,18 +80,17 @@ Correct output:
 """
 
 FINAL_PROMPT = """
-You are finalizing a GitHub Pull Request review.
+Finalize the PR review using the information already available.
 
-Using the investigation and tool results provided:
+No more tools can be called.
 
-1. Identify only actionable, evidence-supported bugs.
-2. Discard speculative or disproven findings.
-3. Do not invent bugs or line numbers.
-4. Do not request additional tools or information.
-5. Produce a JSON response matching the required schema.
-6. If no genuine bugs are found, return {"findings": []}.
+Report only defects supported by available evidence.
+Do not invent missing implementation details.
 
-Do not include Markdown or additional commentary.
+If insufficient evidence exists to establish a defect,
+do not report it.
+
+Return JSON matching the ReviewResult schema.
 """
 
 
@@ -111,7 +110,7 @@ def review_pull_request(messages = [], is_final: bool = False) -> AIMessage:
         response = client.chat.completions.create(
                 model=MODEL_ID,
                 messages=[
-                    {"role": "system", "content": FINAL_PROMPT},
+                    {"role": "system", "content": SYSTEM_PROMPT + '\n' + FINAL_PROMPT},
                     *messages
                 ],
                 max_tokens=800,

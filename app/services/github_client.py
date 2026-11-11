@@ -4,7 +4,10 @@ import re
 import base64
 import requests
 from urllib.parse import quote
-import requests
+from collections.abc import Mapping
+from typing import Literal, TypedDict
+from app.state import PullRequestContext
+from app.schemas import ReviewFinding
 
 
 def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
@@ -234,4 +237,168 @@ def fetch_file_lines(
     )
 
 
+
+
+LineType = Literal["added", "context"]
+
+HUNK_PATTERN = re.compile(
+    r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@"
+)
+
+
+class FindingLocationVerification(TypedDict):
+    filename: str
+    line: int | None
+    file_exists: bool
+    patch_available: bool
+    line_in_patch: bool | None
+    line_type: LineType | None
+    verified: bool
+
+
+def get_patch_line_types(patch: str) -> dict[int, LineType]:
+    """
+    Parse a unified diff and map new-file line numbers
+    to their type: 'added' or 'context'.
+
+    Deleted lines do not exist in the new file and
+    therefore do not increment the new-line counter.
+    """
+    line_types: dict[int, LineType] = {}
+    new_line_number: int | None = None
+
+    for line in patch.splitlines():
+        match = HUNK_PATTERN.match(line)
+
+        if match:
+            new_line_number = int(match.group(1))
+            continue
+
+        if new_line_number is None:
+            continue
+
+        # Ignore diff metadata
+        if line.startswith("\\"):
+            continue
+
+        if line.startswith("+"):
+            line_types[new_line_number] = "added"
+            new_line_number += 1
+
+        elif line.startswith(" "):
+            line_types[new_line_number] = "context"
+            new_line_number += 1
+
+        elif line.startswith("-"):
+            # Deleted lines do not increment new-file positions
+            continue
+
+    return line_types
+
+
+def get_added_lines(patch: str) -> set[int]:
+    """Return all added new-file line numbers."""
+    return {
+        line_number
+        for line_number, line_type
+        in get_patch_line_types(patch).items()
+        if line_type == "added"
+    }
+
+
+def verify_finding_location(
+    finding: ReviewFinding | Mapping[str, object],
+    pr_context: PullRequestContext,
+) -> FindingLocationVerification:
+    """
+    Verify whether a finding references a location
+    present in the pull request's unified diff.
+
+    A finding is location-verified when:
+    - Its filename belongs to a changed PR file.
+    - That file has an available patch.
+    - Its line exists on the new-file side of the patch.
+
+    This does not prove the reported bug is genuine.
+    """
+
+    # Extract finding fields
+    if isinstance(finding, Mapping):
+        filename = finding.get("filename")
+        line = finding.get("line")
+    else:
+        filename = finding.filename
+        line = finding.line
+
+    # Validate inputs
+    if not isinstance(filename, str) or not filename:
+        raise ValueError(
+            "Finding must include a non-empty filename"
+        )
+
+    if line is not None and (
+        not isinstance(line, int)
+        or isinstance(line, bool)
+        or line < 1
+    ):
+        raise ValueError(
+            "Finding line must be a positive integer or None"
+        )
+
+    # Find the changed file in the PR
+    changed_file = next(
+        (
+            file
+            for file in pr_context["files"]
+            if file["filename"] == filename
+        ),
+        None,
+    )
+
+    file_exists = changed_file is not None
+
+    patch = (
+        changed_file.get("patch")
+        if changed_file is not None
+        else None
+    )
+
+    patch_available = isinstance(patch, str) and bool(patch)
+
+    # Parse the patch once
+    line_types = (
+        get_patch_line_types(patch)
+        if patch_available
+        else {}
+    )
+
+    line_type = (
+        line_types.get(line)
+        if line is not None
+        else None
+    )
+
+    # None means verification could not be performed
+    line_in_patch = (
+        line in line_types
+        if patch_available and line is not None
+        else None
+    )
+
+    # Location verification, not semantic bug verification
+    verified = (
+        file_exists
+        and patch_available
+        and line_in_patch is True
+    )
+
+    return {
+        "filename": filename,
+        "line": line,
+        "file_exists": file_exists,
+        "patch_available": patch_available,
+        "line_in_patch": line_in_patch,
+        "line_type": line_type,
+        "verified": verified,
+    }
 
