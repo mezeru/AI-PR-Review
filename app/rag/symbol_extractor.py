@@ -2,6 +2,7 @@ import ast
 import logging
 import re
 from pathlib import PurePath
+from typing import Literal
 
 from tree_sitter import Node
 from tree_sitter_language_pack import get_parser
@@ -30,11 +31,28 @@ _CLASS_TYPES: dict[str, SymbolType] = {
     "annotation_type_declaration": "interface",
 }
 _PYTHON_ASSIGNMENTS = frozenset({"assignment", "augmented_assignment"})
+_JS_LANGUAGES = frozenset({"javascript", "typescript", "tsx"})
+_JS_FIELDS = frozenset({"field_definition", "public_field_definition"})
+_JS_DECLARATIONS = frozenset({"lexical_declaration", "variable_declaration"})
+_PROPERTY_NAMES = frozenset({"identifier", "property_identifier", "private_property_identifier"})
+_BODYLESS_METHODS = frozenset({"method_signature", "method_declaration"})
+_DEFAULT_VALUE_FIELDS = {
+    "default_parameter": "value",
+    "typed_default_parameter": "value",
+    "assignment_pattern": "right",
+    "object_assignment_pattern": "right",
+    "required_parameter": "value",
+    "optional_parameter": "value",
+}
+_SIMPLE_DEFAULTS = frozenset({"integer", "float", "number", "true", "false", "none", "null"})
 _JAVADOC_MARKER = re.compile(r"^\s*(?:/\*\*?|\*/|\* ?)")
+_Scope = Literal["class", "function", "object"]
 
 
 def _line_range(node: Node) -> tuple[int, int]:
-    return node.start_point.row + 1, node.end_point.row + 1
+    start = node.start_point.row + 1
+    end = node.end_point.row + bool(node.end_point.column)
+    return start, max(start, end)
 
 
 def _bounded(value: str, limit: int) -> str:
@@ -44,71 +62,122 @@ def _bounded(value: str, limit: int) -> str:
     return value
 
 
-def _body_start(node: Node) -> int | None:
+def _header_end(node: Node) -> int | None:
+    if node.type in {"function_definition", "class_definition"}:
+        # Python can recover erroneous suite text as an ERROR sibling before its block.
+        for child in node.children:
+            if child.is_missing or child.has_error:
+                return None
+            if child.type == ":":
+                return child.end_byte
+        return None
+
     body = node.child_by_field_name("body")
-    return body.start_byte if body is not None else None
+    if any(child.is_missing or (child != body and child.has_error) for child in node.children):
+        return None
+    if body is not None:
+        closing = body.child(body.child_count - 1) if body.child_count else None
+        if closing is not None and closing.type == "}" and closing.is_missing:
+            return None
+        return body.start_byte
+    return node.end_byte if node.type in _BODYLESS_METHODS else None
+
+
+def _valid_wrapper(node: Node, declaration: Node) -> bool:
+    while node != declaration:
+        parent = node.parent
+        if parent is None or any(
+            child != node and (child.is_missing or child.has_error) for child in parent.children
+        ):
+            return False
+        node = parent
+    return True
+
+
+def _redacted_defaults(node: Node) -> list[tuple[int, int]]:
+    parameters = node.child_by_field_name("parameters")
+    if parameters is None:
+        return []
+
+    ranges: list[tuple[int, int]] = []
+    pending = [parameters]
+    while pending:
+        current = pending.pop()
+        field = _DEFAULT_VALUE_FIELDS.get(current.type)
+        value = current.child_by_field_name(field) if field is not None else None
+        if value is not None and value.type not in _SIMPLE_DEFAULTS:
+            ranges.append((value.start_byte, value.end_byte))
+        pending.extend(child for child in reversed(current.named_children) if child != value)
+    return sorted(ranges)
 
 
 def _signature(
     node: Node,
-    declaration: Node,
     source: bytes,
-    *,
-    variable_name: str | None = None,
+    start: int,
+    prefix: str,
 ) -> str | None:
-    if node.has_error or declaration.has_error:
+    end = _header_end(node)
+    if end is None:
         return None
-
-    start = (
-        declaration.start_byte
-        if declaration.type == "export_statement"
-        else node.start_byte
-    )
-    if variable_name is not None:
-        parent = node.parent
-        if parent is None:
-            return None
-        kind_prefix = ""
-        lexical = parent
-        if lexical.type in {"lexical_declaration", "variable_declaration"}:
-            first = lexical.named_children[0] if lexical.named_children else None
-            prefix_end = first.start_byte if first is not None else lexical.end_byte
-            kind_prefix = source[lexical.start_byte:prefix_end].decode("utf-8").strip()
-            if declaration.type == "export_statement":
-                if kind_prefix.startswith("export "):
-                    kind_prefix = kind_prefix[len("export ") :]
-                kind_prefix = "export " + kind_prefix.strip()
-            start = node.start_byte
-        else:
-            prefix = source[parent.start_byte:node.start_byte].decode("utf-8").strip()
-            signature = f"{prefix} {variable_name}".strip()
-            return _bounded(signature, MAX_SIGNATURE_CHARS) or None
-        value = node.child_by_field_name("value")
-        name_node = node.child_by_field_name("name")
-        if name_node is None:
-            return None
-        if value is not None and value.type in _FUNCTION_VALUES:
-            body_start = _body_start(value)
-            if body_start is None:
-                body_start = value.end_byte
-            binding = source[node.start_byte:body_start].decode("utf-8")
-            binding = re.sub(r"\s*=>\s*$", "", binding).strip()
-            if start != node.start_byte:
-                binding = source[start:node.start_byte].decode("utf-8") + binding
-            signature = f"{kind_prefix} {binding}".strip()
-        else:
-            signature = f"{kind_prefix} {variable_name}".strip()
-    else:
-        body_start = _body_start(node)
-        if body_start is None:
-            if node.type not in {"method_signature", "method_declaration"}:
-                return None
-            body_start = node.end_byte
-        signature = source[start:body_start].decode("utf-8").strip()
+    parts = [prefix]
+    for value_start, value_end in _redacted_defaults(node):
+        parts.extend((source[start:value_start].decode("utf-8"), "..."))
+        start = value_end
+    parts.append(source[start:end].decode("utf-8"))
+    signature = "".join(parts)
+    if node.type == "arrow_function":
         signature = re.sub(r"\s*=>\s*$", "", signature)
+    return _bounded(signature, MAX_SIGNATURE_CHARS) or None
 
-    signature = _bounded(signature, MAX_SIGNATURE_CHARS)
-    return signature or None
+
+def _property_name(node: Node | None) -> str | None:
+    if node is None or node.is_missing or node.has_error or node.type not in _PROPERTY_NAMES:
+        return None
+    return node.text.decode("utf-8")
+
+
+def _member_name(node: Node | None) -> str | None:
+    if node is not None and node.type == "string" and not node.has_error:
+        if node.named_child_count == 1:
+            fragment = node.named_child(0)
+            if fragment is not None and fragment.type == "string_fragment":
+                return fragment.text.decode("utf-8") or None
+        return None
+    return _property_name(node)
+
+
+def _binding_names(node: Node) -> list[str]:
+    names: list[str] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if current.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            names.append(current.text.decode("utf-8"))
+        elif current.type in {"array_pattern", "object_pattern", "rest_pattern"}:
+            pending.extend(reversed(current.named_children))
+        elif current.type in {"pair_pattern", "assignment_pattern", "object_assignment_pattern"}:
+            field = "value" if current.type == "pair_pattern" else "left"
+            target = current.child_by_field_name(field)
+            if target is not None:
+                pending.append(target)
+    return names
+
+
+def _has_braced_body(node: Node) -> bool:
+    body = node.child_by_field_name("body")
+    if body is None or body.type != "statement_block" or not body.child_count:
+        return False
+    closing = body.child(body.child_count - 1)
+    return closing is not None and closing.type == "}" and not closing.is_missing
+
+
+def _definition_name(node: Node, declaration: Node) -> str | None:
+    name = _symbol_name(node)
+    if name is None and declaration.type == "export_statement":
+        if any(child.type == "default" for child in declaration.children):
+            return "default"
+    return name
 
 
 def _clean_comment(raw: str) -> str | None:
@@ -153,8 +222,8 @@ def _python_docstring(node: Node, source: bytes) -> str | None:
     raw = source[expression.start_byte:expression.end_byte].decode("utf-8")
     try:
         value = ast.literal_eval(raw)
-    except (SyntaxError, ValueError):
-        return _bounded(raw, MAX_DOCSTRING_CHARS) or None
+    except (SyntaxError, ValueError, RecursionError):
+        return None
     return _bounded(value, MAX_DOCSTRING_CHARS) if isinstance(value, str) else None
 
 
@@ -199,13 +268,13 @@ def _file_metadata(
         "signature": None,
         "docstring": None,
         "start_line": 1,
-        "end_line": max(1, len(source.splitlines())),
+        "end_line": source.count("\n") + (not source.endswith("\n")),
         "parse_status": status,
     }
 
 
 def extract_symbol_metadata(source: str, filename: str) -> list[SymbolMetadata]:
-    """Extract body-free symbol metadata from a source file using Tree-sitter."""
+    """Extract body-free symbols and one file record for nonempty source."""
     language = _EXTENSIONS.get(PurePath(filename).suffix.lower())
     if not source:
         return []
@@ -221,19 +290,20 @@ def extract_symbol_metadata(source: str, filename: str) -> list[SymbolMetadata]:
 
     status: ParseStatus = "syntax_error" if root.has_error else "parsed"
     extractor = _EXTRACTORS[language]
-    variable_types = extractor.variables | ({"variable_declarator"} if language == "java" else set())
+    is_javascript_family = language in _JS_LANGUAGES
+    variable_types = extractor.variables if language != "java" else {"variable_declarator"}
     results: list[SymbolMetadata] = []
     seen: set[tuple[str, SymbolType, int, int]] = set()
+    pending: list[tuple[Node, tuple[str, ...], _Scope | None]] = [(root, (), None)]
 
     def add(
         node: Node,
         declaration: Node,
-        symbol: str,
+        scopes: tuple[str, ...],
         symbol_type: SymbolType,
         signature: str | None,
     ) -> None:
-        if node.has_error or declaration.has_error:
-            return
+        symbol = ".".join(scopes)
         key = (symbol, symbol_type, declaration.start_byte, declaration.end_byte)
         if key in seen:
             return
@@ -251,124 +321,177 @@ def extract_symbol_metadata(source: str, filename: str) -> list[SymbolMetadata]:
             )
         )
 
-    def visit(node: Node, scopes: tuple[str, ...] = ()) -> None:
+    def add_definition(
+        node: Node,
+        declaration: Node,
+        scopes: tuple[str, ...],
+        symbol_type: SymbolType,
+        *,
+        start: int | None = None,
+        prefix: str = "",
+        allow_missing_signature: bool = False,
+    ) -> bool:
+        if not _valid_wrapper(node, declaration):
+            return False
+        if start is None:
+            start = (
+                declaration.start_byte if declaration.type == "export_statement" else node.start_byte
+            )
+        signature = _signature(node, encoded, start, prefix)
+        if signature is None and not (allow_missing_signature and _has_braced_body(node)):
+            return False
+        add(node, declaration, scopes, symbol_type, signature)
+        return True
+
+    def visit_body(node: Node, scopes: tuple[str, ...], scope: _Scope) -> None:
+        body = node.child_by_field_name("body")
+        if body is not None:
+            pending.append((body, scopes, scope))
+
+    def visit_binding(node: Node, scopes: tuple[str, ...], scope: _Scope | None) -> None:
+        name_node = node.child_by_field_name("name")
+        parent = node.parent
+        if name_node is None or name_node.is_missing or name_node.has_error or parent is None:
+            return
+
+        name = _property_name(name_node)
+        if language == "java":
+            if (
+                name is None
+                or node.has_error
+                or parent.type not in {"field_declaration", "constant_declaration"}
+            ):
+                return
+            first = parent.child_by_field_name("declarator")
+            if first is not None:
+                prefix = encoded[parent.start_byte:first.start_byte].decode("utf-8").strip()
+                signature = _bounded(f"{prefix} {name}", MAX_SIGNATURE_CHARS)
+                add(node, node, (*scopes, name), "variable", signature)
+            return
+
+        if parent.type not in _JS_DECLARATIONS:
+            return
+        binding = _declaration(parent)
+        declaration = binding if parent.named_child_count == 1 else node
+        kind = parent.child(0)
+        if kind is None or kind.type not in {"const", "let", "var"}:
+            return
+        prefix = ("export " if binding.type == "export_statement" else "") + kind.type + " "
+        value = node.child_by_field_name("value")
+        if name is not None and value is not None and value.type in _FUNCTION_VALUES:
+            symbol_path = (*scopes, name)
+            if add_definition(
+                value, declaration, symbol_path, "function", start=node.start_byte, prefix=prefix
+            ):
+                visit_body(value, symbol_path, "function")
+        elif scope != "function":
+            if (
+                name is not None
+                and value is not None
+                and value.type == "object"
+                and _valid_wrapper(value, declaration)
+            ):
+                pending.append((value, (*scopes, name), "object"))
+            elif node.has_error or declaration.has_error:
+                return
+            for binding_name in _binding_names(name_node):
+                signature = _bounded(prefix + binding_name, MAX_SIGNATURE_CHARS)
+                add(node, declaration, (*scopes, binding_name), "variable", signature)
+
+    def visit_member(node: Node, key: Node | None, scopes: tuple[str, ...]) -> None:
+        name = _member_name(key)
+        value = node.child_by_field_name("value")
+        if name is None or value is None:
+            return
+        symbol_path = (*scopes, name)
+        if value.type in _FUNCTION_VALUES:
+            if add_definition(
+                value, node, symbol_path, "method", start=node.start_byte,
+                allow_missing_signature=node.type == "pair",
+            ):
+                visit_body(value, symbol_path, "function")
+        elif node.type == "pair" and value.type == "object":
+            pending.append((value, symbol_path, "object"))
+
+    def visit(node: Node, scopes: tuple[str, ...], scope: _Scope | None) -> None:
         if node.is_missing:
             return
 
         if node.type in extractor.classes:
-            name = _symbol_name(node)
             declaration = _declaration(node)
-            if not name and declaration.type == "export_statement":
-                if encoded[declaration.start_byte:declaration.end_byte].lstrip().startswith(
-                    b"export default"
-                ):
-                    name = "default"
-            if not name:
-                return
-            symbol = ".".join((*scopes, name))
-            if not node.has_error and not declaration.has_error:
-                add(
-                    node,
-                    declaration,
-                    symbol,
-                    _CLASS_TYPES.get(node.type, "class"),
-                    _signature(node, declaration, encoded),
-                )
-            body = node.child_by_field_name("body")
-            if body is not None:
-                for child in body.named_children:
-                    visit(child, (*scopes, name))
+            name = _definition_name(node, declaration)
+            if name:
+                symbol_path = (*scopes, name)
+                add_definition(node, declaration, symbol_path, _CLASS_TYPES.get(node.type, "class"))
+                visit_body(node, symbol_path, "class")
             return
 
         if node.type == "export_statement":
             value = node.child_by_field_name("value")
             if value is not None and value.type in _FUNCTION_VALUES:
-                add(
-                    value,
-                    node,
-                    "default",
-                    "function",
-                    _signature(value, node, encoded),
-                )
+                if add_definition(value, node, ("default",), "function"):
+                    visit_body(value, ("default",), "function")
                 return
 
         if node.type in extractor.functions:
             declaration = _declaration(node)
-            name = _symbol_name(node)
-            if not name and declaration.type == "export_statement":
-                if encoded[declaration.start_byte:declaration.end_byte].lstrip().startswith(
-                    b"export default"
-                ):
-                    name = "default"
+            name = (
+                _member_name(node.child_by_field_name("name"))
+                if scope == "object" else _definition_name(node, declaration)
+            )
             if name:
-                symbol = ".".join((*scopes, name))
+                symbol_path = (*scopes, name)
                 symbol_type: SymbolType
                 if node.type == "constructor_declaration":
                     symbol_type = "constructor"
                 else:
-                    symbol_type = "method" if scopes else "function"
-                add(
-                    node,
-                    declaration,
-                    symbol,
-                    symbol_type,
-                    _signature(node, declaration, encoded),
-                )
+                    symbol_type = "method" if scope in {"class", "object"} else "function"
+                if add_definition(
+                    node, declaration, symbol_path, symbol_type, allow_missing_signature=scope == "object"
+                ):
+                    visit_body(node, symbol_path, "function")
             return
 
         if node.type in variable_types:
-            name = _symbol_name(node)
-            if name:
-                declaration = node
-                parent = node.parent
-                if parent is not None and parent.type in {
-                    "lexical_declaration",
-                    "variable_declaration",
-                }:
-                    declaration = _declaration(parent)
-                value = node.child_by_field_name("value")
-                is_callable = value is not None and value.type in _FUNCTION_VALUES
-                symbol = ".".join((*scopes, name))
-                signature = _signature(
-                    node,
-                    declaration,
-                    encoded,
-                    variable_name=name,
-                )
-                add(
-                    node,
-                    declaration,
-                    symbol,
-                    ("function" if is_callable else "variable"),
-                    signature,
-                )
+            visit_binding(node, scopes, scope)
             return
 
-        if language == "python" and not scopes and node.type in _PYTHON_ASSIGNMENTS:
-            left = node.child_by_field_name("left")
-            if left is not None and left.type == "identifier":
-                name = left.text.decode("utf-8")
-                right = node.child_by_field_name("right")
-                signature = (
-                    encoded[node.start_byte:right.start_byte].decode("utf-8").rstrip().rstrip("=")
-                    if right is not None
-                    else name
-                )
-                add(
-                    node,
-                    node,
-                    name,
-                    "variable",
-                    signature.strip() or name,
-                )
+        if is_javascript_family:
+            if scope == "class" and node.type in _JS_FIELDS:
+                key = node.child_by_field_name("name") or node.child_by_field_name("property")
+                visit_member(node, key, scopes)
+                return
+            if node.type == "object":
+                if scope == "object":
+                    pending.extend(
+                        (child, scopes, scope)
+                        for child in reversed(node.named_children)
+                        if child.type in {"method_definition", "pair"}
+                    )
+                return
+            if scope == "object" and node.type == "pair":
+                visit_member(node, node.child_by_field_name("key"), scopes)
+                return
+            if node.type in _FUNCTION_VALUES:
                 return
 
-        for child in node.named_children:
-            visit(child, scopes)
+        if language == "python" and scope != "function" and node.type in _PYTHON_ASSIGNMENTS:
+            left = node.child_by_field_name("left")
+            name = _property_name(left)
+            if left is not None and name and not node.has_error:
+                annotation = node.child_by_field_name("type")
+                signature = (
+                    encoded[left.start_byte:annotation.end_byte].decode("utf-8")
+                    if annotation is not None
+                    else name
+                )
+                add(node, node, (*scopes, name), "variable", _bounded(signature, MAX_SIGNATURE_CHARS))
+            return
 
-    for child in root.named_children:
-        visit(child)
+        pending.extend((child, scopes, scope) for child in reversed(node.named_children))
 
-    if results:
-        return results
-    return [_file_metadata(source, filename, language, status)]
+    while pending:
+        visit(*pending.pop())
+
+    results.append(_file_metadata(source, filename, language, status))
+    return results
