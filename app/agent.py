@@ -362,6 +362,35 @@ Rules:
 - Do not report speculative bugs.
 - If no genuine findings exist, return {"findings": []}.
 - Do not wrap the JSON in Markdown.
+
+CATEGORY CLASSIFICATION RULES:
+
+Every finding MUST use exactly one of these categories:
+
+- correctness: Logic errors, data integrity, incorrect
+  transformations, serialization, invalid calculations,
+  and incorrect application behavior.
+
+- security: Injection, unauthorized access, information
+  disclosure, and security vulnerabilities.
+
+- performance: Demonstrable performance regressions.
+
+- reliability: Error handling, failures, concurrency,
+  retries, and resource management.
+
+IMPORTANT:
+Review dimensions are NOT output categories.
+
+Do not create new categories such as:
+data_flow, data_integrity, logic_bug, error_handling,
+concurrency, or validation.
+
+Map those concepts to one of the four allowed categories.
+
+Severity must be exactly one of:
+Critical, High, Medium, Low.
+
 """
 
 
