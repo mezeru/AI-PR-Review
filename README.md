@@ -114,6 +114,25 @@ python -c "from tree_sitter_language_pack import prefetch; prefetch(['python', '
 python -m pytest -q tests/test_chunker.py tests/test_rag_ingestion.py
 ```
 
+## Extract symbol metadata
+
+`extract_symbol_metadata(source, filename)` returns declaration metadata and one
+file record for every nonempty source file. The file record carries the
+repository-relative path, language, line range, and parse status. Callable fields
+and named object members use their containing class or object in the qualified
+name. See [the metadata example](examples/extract_symbol_metadata.py).
+
+`load_repository_symbols(owner, repo, sha)` fetches the repository files at the
+specified revision and combines their extracted metadata. Non-UTF-8 files are
+skipped because they cannot be analyzed as source text.
+
+Callable signatures omit their bodies, and variable signatures omit their
+initializers. String and compound parameter defaults are replaced with `...`.
+Bounded docstrings and comments,
+identifiers, paths, type annotations, and other retained text can still contain
+sensitive information. Treat extracted metadata as potentially confidential and
+apply the repository's access permissions when storing, retrieving, or sharing it.
+
 ## Project structure
 
 - `app/main.py` — CLI argument handling and review entry point.
@@ -132,4 +151,3 @@ python -m pytest -q tests/test_chunker.py tests/test_rag_ingestion.py
 - `app/tools/fetch_file_tool.py` — bounded source-context tool exposed to the
   model.
 - `tests/` — project tests.
-

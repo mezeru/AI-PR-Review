@@ -152,6 +152,57 @@ def fetch_pr_files(
     return files
 
 
+def fetch_repository_file_paths(
+    owner: str,
+    repo: str,
+    ref: str,
+    token: str | None = None,
+    timeout: float = 10.0,
+) -> list[str]:
+    """Fetch repository file paths at a ref using GitHub's recursive tree API."""
+    if not owner or not repo or not ref.strip():
+        raise ValueError("owner, repo, and ref are required")
+
+    url = (
+        f"https://api.github.com/repos/{quote(owner, safe='')}/"
+        f"{quote(repo, safe='')}/git/trees/{quote(ref, safe='')}"
+    )
+    try:
+        response = requests.get(
+            url,
+            params={"recursive": "1"},
+            headers=_headers(token),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError("Failed to fetch repository tree") from exc
+
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise ValueError("GitHub returned invalid JSON for repository tree") from exc
+
+    if not isinstance(data, dict) or not isinstance(data.get("tree"), list):
+        raise ValueError("Unexpected GitHub repository tree response")
+    if not isinstance(data.get("truncated"), bool):
+        raise ValueError("GitHub repository tree response is missing truncation status")
+    if data["truncated"]:
+        raise RuntimeError("GitHub returned a truncated repository tree")
+
+    paths: list[str] = []
+    for item in data["tree"]:
+        if not isinstance(item, dict):
+            raise ValueError("Unexpected GitHub repository tree entry")
+        if item.get("type") == "blob":
+            path = item.get("path")
+            if not isinstance(path, str) or not path:
+                raise ValueError("GitHub repository tree entry is missing a file path")
+            paths.append(path)
+
+    return paths
+
+
 def consolidate_pr_data(
     pr_url: str,
     token: str | None = None,

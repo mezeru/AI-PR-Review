@@ -21,7 +21,6 @@ class FetchFileArgs(BaseModel):
     )
 
 @tool(args_schema=FetchFileArgs)
-
 def get_file_context(path:str, start_line:int, line_count: int, runtime: ToolRuntime)-> str:
     """Fetch up to 150 lines from the current PR repository."""
     end_line = start_line + line_count - 1
