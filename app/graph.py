@@ -16,6 +16,7 @@ from typing import Literal
 from app.nodes.tool_budget_exhaust import tool_budget_exhausted
 from app.tools.rag_check import search_codebase
 from app.context import ReviewContext
+from langgraph.managed import RemainingSteps
 
 load_dotenv()
 
@@ -39,7 +40,7 @@ def review_tool_budget(state: ReviewState) -> Literal["tools", "normalise_final"
 
     requested_tool_calls = count_tool_calls(state)
 
-    if(requested_tool_calls + len(last_message.tool_calls) > MAX_TOOL_CALLS):
+    if(requested_tool_calls + len(last_message.tool_calls) > MAX_TOOL_CALLS) or state["remaining_steps"] < 5:
         return "budget_exhausted"
 
     return "tools"
@@ -48,7 +49,7 @@ def review_post_tool_call(state: ReviewState)-> Literal["review_code","normalise
 
     tool_calls = count_tool_calls(state)
 
-    if tool_calls >= MAX_TOOL_CALLS:
+    if tool_calls >= MAX_TOOL_CALLS or state["remaining_steps"] < 5:
         return "normalise_final"
 
     return "review_code"

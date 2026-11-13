@@ -5,6 +5,7 @@ from .models.pr_model import PullRequestContext
 from langgraph.graph import MessagesState
 from .schemas import ReviewResult
 from app.services.github_client import FindingLocationVerification
+from langgraph.managed import RemainingSteps
 
 
 class ReviewState(MessagesState):
@@ -15,3 +16,4 @@ class ReviewState(MessagesState):
     location_verifications: NotRequired[
         list[FindingLocationVerification]
     ]
+    remaining_steps: RemainingSteps

@@ -301,7 +301,6 @@ HUNK_PATTERN = re.compile(
     r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@"
 )
 
-
 class FindingLocationVerification(TypedDict):
     filename: str
     line: int | None
@@ -383,7 +382,7 @@ def verify_finding_location(
         filename = finding.get("filename")
         line = finding.get("line")
     else:
-        filename = finding.filename
+        filename = finding.file
         line = finding.line
 
     # Validate inputs
