@@ -62,7 +62,7 @@ class SymbolBM25Index:
         ranked_indices = sorted(
             matching_indices,
             key=lambda i: scores[i],
-            reverse=True
+            reverse=False
         )
 
         # Step 4: Apply optional type filter

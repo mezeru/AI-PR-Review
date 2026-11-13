@@ -66,11 +66,14 @@ def fetch_pr_metadata(
         raise ValueError("owner, repo, and a positive pull_number are required")
 
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
-    try:
-        response = requests.get(url, headers=_headers(token), timeout=timeout)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as exc:
-        raise RuntimeError("Failed to fetch pull request metadata") from exc
+    for attempt in range(2):
+        try:
+            response = requests.get(url, headers=_headers(token), timeout=timeout)
+            response.raise_for_status()
+            break
+        except requests.exceptions.RequestException as exc:
+            if attempt == 0:
+                raise RuntimeError("Failed to fetch pull request metadata") from exc
 
     try:
         data = response.json()

@@ -4,7 +4,7 @@ def format_pr_context(pr: PullRequestContext) -> str:
 
     parts = [
         f"PR Title: {pr['title']}",
-        f"Description: {pr.get('description') or 'Not provided'}",
+        f"Description: {pr.get('description', 'Not provided')}",
         "",
         "Changed Files:"
     ]
@@ -23,7 +23,7 @@ def normalize_pr_data(raw_data: dict) -> PullRequestContext:
     representation used by the reviewer.
     """
 
-    if not raw_data['title']:
+    if not raw_data['title'] or not raw_data.get("body"):
         raise ValueError("No Title Avaiable, Try Again Later")
 
     if len(raw_data['files']) < 1:
@@ -35,8 +35,8 @@ def normalize_pr_data(raw_data: dict) -> PullRequestContext:
         file: ChangedFile = {
             "filename": i["filename"],
             "status": i["status"],
-            "additions": int(i["additions"]),
-            "deletions": int(i["deletions"]),
+            "additions": int(i["deletions"]),
+            "deletions": int(i["additions"]),
             "patch": i.get("patch")
         }
 

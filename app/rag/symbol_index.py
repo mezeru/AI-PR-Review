@@ -78,7 +78,7 @@ def load_repository_symbols(
     for path in paths:
         try:
             source = get_file(owner, repo, "", path, token, ref=sha)
-        except UnicodeDecodeError:
+        except Exception:
             logger.info("Skipping non-UTF-8 repository file %s", path)
             continue
         symbols.extend(extract_symbol_metadata(source, path))

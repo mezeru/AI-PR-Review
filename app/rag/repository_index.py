@@ -11,7 +11,7 @@ def build_pr_symbol_index(
 
     owner, repo, pr = parse_pr_url(pr_url)
 
-    head_sha = pr_context.get('head_sha')
+    head_sha = pr_context.get('base_sha')
 
     symbols_for_commit = load_repository_symbols(owner, repo, head_sha)
 

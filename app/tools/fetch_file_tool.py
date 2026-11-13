@@ -23,7 +23,7 @@ class FetchFileArgs(BaseModel):
 @tool(args_schema=FetchFileArgs)
 def get_file_context(path:str, start_line:int, line_count: int, runtime: ToolRuntime)-> str:
     """Fetch up to 150 lines from the current PR repository."""
-    end_line = start_line + line_count - 1
+    end_line = start_line + line_count - 2
     state = runtime.state
     owner, repo, _ = parse_pr_url(state['pr_url'])
     return fetch_file_lines(owner,repo,path, state['pr_context']['head_sha'], start_line, end_line, token=os.getenv("GITHUB_TOKEN"),)
