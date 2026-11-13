@@ -10,9 +10,13 @@ from langchain_core.utils.function_calling import (
 )
 from app.tools.fetch_file_tool import get_file_context
 from langchain_core.messages import AIMessage
+from app.tools.rag_check import search_codebase
 
 
-tool_schema = convert_to_openai_tool(get_file_context)
+tool_schemas = [
+    convert_to_openai_tool(get_file_context),
+    convert_to_openai_tool(search_codebase)
+]
 
 
 MODEL_ID = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
@@ -80,17 +84,36 @@ Correct output:
 """
 
 FINAL_PROMPT = """
-Finalize the PR review using the information already available.
+Finalize the PR review using only the available evidence.
 
-No more tools can be called.
+Return ONLY a JSON object with this exact structure:
 
-Report only defects supported by available evidence.
-Do not invent missing implementation details.
+{
+  "findings": [
+    {
+      "file": "app/example.py",
+      "line": 42,
+      "severity": "High",
+      "category": "correctness",
+      "explanation": "Explain the actual incorrect behavior.",
+      "evidence": "Describe a concrete triggering scenario.",
+      "suggested_fix": "Describe how to correct the issue."
+    }
+  ]
+}
 
-If insufficient evidence exists to establish a defect,
-do not report it.
-
-Return JSON matching the ReviewResult schema.
+Rules:
+- The example above illustrates format only, not a real finding.
+- All seven fields are required for every finding.
+- file, line, severity, category, explanation,
+  evidence, and suggested_fix must be at the same level.
+- line can be null if unknown.
+- severity: Critical, High, Medium, Low.
+- category: correctness, security, performance, reliability.
+- Do not use 'type', 'description', 'details', or 'fix'.
+- Do not report speculative bugs.
+- If no genuine findings exist, return {"findings": []}.
+- Do not wrap the JSON in Markdown.
 """
 
 
@@ -113,7 +136,7 @@ def review_pull_request(messages = [], is_final: bool = False) -> AIMessage:
                     {"role": "system", "content": SYSTEM_PROMPT + '\n' + FINAL_PROMPT},
                     *messages
                 ],
-                max_tokens=800,
+                max_tokens=2000,
                 temperature=0.1,
                 response_format=response_format
                 
@@ -128,7 +151,7 @@ def review_pull_request(messages = [], is_final: bool = False) -> AIMessage:
             ],
             max_tokens=800,
             temperature=0.1,
-            tools=[tool_schema],
+            tools=tool_schemas,
             tool_choice='auto'
             
         )

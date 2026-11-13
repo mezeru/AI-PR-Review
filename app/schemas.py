@@ -10,7 +10,7 @@ class Finding(BaseModel):
 class ReviewFinding(BaseModel):
     file: str
     line: int| None=None
-    severity: Literal["critical", "high", "medium", "low"]
+    severity: Literal["Critical", "High", "Medium", "Low"]
     category: Literal["correctness","security","performance","reliability"]
     explanation: str
     evidence: str
