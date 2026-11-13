@@ -1,48 +1,54 @@
 # AI PR Reviewer
 
-AI Pull Request Investigator is a Python command-line tool that reviews a
-GitHub pull request for actionable defects introduced by its changes. It uses
-GitHub's API to load the pull request, a Qwen code-review model hosted through
-Hugging Face Inference Providers to analyze it, and LangGraph to coordinate
-model and tool calls.
+AI PR Reviewer is a Python command-line application that reviews a GitHub pull
+request for actionable defects introduced by its changes. It retrieves PR data
+through the GitHub REST API, asks a Qwen code-review model through Hugging Face
+Inference Providers to investigate the changes, and coordinates model and tool
+calls with LangGraph.
 
-## Features
+## What it does
 
-- Accepts a GitHub pull request URL and loads its metadata and changed files.
-- Builds review context from the PR description and unified diffs.
-- Runs a correctness-focused review with structured findings:
-  severity, category, file, line, explanation, evidence, and suggested fix.
-- Lets the model request additional source context from the PR's head revision.
-  Each request is limited to 150 lines, and the graph allows at most five tool
-  calls per review.
-- Validates the final JSON response with Pydantic.
-- Checks whether each finding points to a changed file and a line present in
-  that file's patch, identifying added lines versus context lines.
-- Prints the validated findings as JSON in the terminal.
-- Integrates a Langfuse callback for graph tracing when configured.
+- Accepts a `github.com` pull-request URL, then fetches the PR metadata and
+  changed-file patches.
+- Builds an in-memory BM25 symbol index from repository source metadata.
+- Sends the PR title, description, and changed-file patches to the reviewer.
+- Gives the model two read-only tools: search indexed symbols and retrieve a
+  bounded range of source lines from the repository.
+- Validates the final response against a Pydantic schema.
+- Checks whether each reported location belongs to a changed file and a line
+  represented in its patch. This confirms location, not that the finding is a
+  genuine defect.
+- Prints the validated findings as JSON.
+- Uses Langfuse callbacks for graph tracing when configured.
 
-Location verification confirms that a finding points into the changed diff; it
-does not independently prove that the finding is a real defect.
+The review graph permits up to 10 tool results in total. Source-context requests
+are limited to 150 lines each. If the tool budget is exhausted, the reviewer is
+asked to finalize using the evidence gathered so far.
 
-## Review workflow
+## Review flow
 
-The graph starts with the model review. If the model requests source context,
-LangGraph runs the GitHub file-context tool and returns its result to the
-reviewer. When the tool-call budget is exhausted, the reviewer is asked to
-finalize using the evidence already gathered. The final response is validated
-and its finding locations are checked before the CLI prints the result.
+1. Parse the PR URL and fetch its metadata and changed files.
+2. Normalize the API response into the application's PR context.
+3. Extract repository symbol metadata and build the BM25 search index.
+4. Ask the model to review the PR. It may call the symbol-search or file-context
+   tool for more information.
+5. Validate the final structured response and verify finding locations against
+   the PR patches.
+6. Print the findings JSON to standard output.
 
 ![LangGraph review workflow](review+graph.png)
+
+The command-line output contains the findings. Location-verification details
+are kept in the graph result and are not currently printed by the CLI.
 
 ## Requirements and setup
 
 - Python 3.11 or newer
 - A Hugging Face access token with access to the configured inference provider
-- Optional: a GitHub token for authenticated API requests (for example, to
-  access private repositories or increase API rate limits)
+- Optional: a GitHub token for authenticated API requests, private repositories,
+  or higher API rate limits
 
-Create and activate a virtual environment, then install the project
-dependencies:
+Create and activate a virtual environment, then install the dependencies:
 
 ```powershell
 python -m venv .venv
@@ -57,31 +63,37 @@ HF_TOKEN=your_hugging_face_token
 GITHUB_TOKEN=your_github_token
 ```
 
-`HF_TOKEN` is required. `GITHUB_TOKEN` is optional for public pull requests.
+`HF_TOKEN` is required. `GITHUB_TOKEN` is optional for public repositories.
 Never commit credentials.
 
 ## Run a review
 
-Pass the PR URL directly:
+Pass the PR URL as an argument:
 
 ```powershell
 python -m app.main --pr-url https://github.com/owner/repository/pull/123
 ```
 
-Or omit `--pr-url` to be prompted for it:
+Or omit `--pr-url` to be prompted:
 
 ```powershell
 python -m app.main
 ```
 
-The command prints the validated `ReviewResult` as formatted JSON. A successful
-review with no actionable findings returns an empty `findings` array.
+The CLI prints a JSON object with a `findings` array. Each finding contains a
+file, an optional line number, severity, category, explanation, evidence, and a
+suggested fix. If no actionable findings are returned, the array is empty.
 
-## Chunk files at a pull request revision
+## Code retrieval and indexing
 
-Supply repository-relative text file paths from the revision you want to ingest.
-Each request uses the PR's head SHA, and the returned batch carries its repository
-owner, name, and SHA.
+The runtime symbol index is created by `build_pr_symbol_index`. It extracts
+symbol metadata from repository files and ranks matches with BM25. The
+`search_codebase` tool returns matching symbol names, types, filenames, line
+ranges, and signatures. The `get_file_context` tool fetches numbered source
+lines from the PR repository.
+
+The repository also provides a separate chunking utility for callers that need
+bounded code chunks from selected files:
 
 ```python
 from app.rag.ingestion import chunk_pr_files
@@ -90,64 +102,74 @@ from app.services.pr_normalizer import normalize_pr_data
 
 pr_url = "https://github.com/owner/repository/pull/123"
 pr_context = normalize_pr_data(consolidate_pr_data(pr_url))
-paths = ["src/service.py", "web/View.tsx", "config.yaml"]
-batch = chunk_pr_files(pr_url, pr_context, paths)
+batch = chunk_pr_files(
+    pr_url,
+    pr_context,
+    ["src/service.py", "web/view.tsx", "config.yaml"],
+)
 
 for chunk in batch.chunks:
     print(
-        chunk["filename"], chunk["language"], chunk["symbol"],
-        chunk["start_line"], chunk["end_line"], chunk["parse_status"],
+        chunk["filename"],
+        chunk["language"],
+        chunk["symbol"],
+        chunk["start_line"],
+        chunk["end_line"],
+        chunk["parse_status"],
     )
 ```
 
-The default limits are 100 lines and 8,000 characters per chunk, with up to 10
-lines of overlap within a symbol or a class context region. An oversized line
-can span multiple chunks with the same line number. Parse status applies to the
-whole file. Unsupported extensions and parser failures use bounded text chunks.
+Chunking recognizes Python, JavaScript, TypeScript, TSX, and Java. Other
+extensions use bounded text chunks. Defaults are 100 lines and 8,000 characters
+per chunk, with up to 10 lines of overlap. A line longer than the character
+limit can span multiple chunks. Parse status describes the whole file.
 
-The language pack may download grammars on first use. With a version that
-downloads grammars on demand, prime its cache before running the chunking tests
-offline:
+The language pack may download grammars on first use. To prime its cache before
+running chunking tests offline:
 
 ```powershell
 python -c "from tree_sitter_language_pack import prefetch; prefetch(['python', 'javascript', 'typescript', 'tsx', 'java'])"
 python -m pytest -q tests/test_chunker.py tests/test_rag_ingestion.py
 ```
 
-## Extract symbol metadata
+`extract_symbol_metadata(source, filename)` returns metadata for declarations
+and a file record for nonempty input. Callable signatures omit function bodies;
+variable signatures omit initializers. Some parameter defaults are replaced
+with `...`. Extracted identifiers, paths, comments, docstrings, and type
+annotations may still contain sensitive information. Treat repository-derived
+metadata as potentially confidential.
 
-`extract_symbol_metadata(source, filename)` returns declaration metadata and one
-file record for every nonempty source file. The file record carries the
-repository-relative path, language, line range, and parse status. Callable fields
-and named object members use their containing class or object in the qualified
-name. See [the metadata example](examples/extract_symbol_metadata.py).
+## Tests
 
-`load_repository_symbols(owner, repo, sha)` fetches the repository files at the
-specified revision and combines their extracted metadata. Non-UTF-8 files are
-skipped because they cannot be analyzed as source text.
+Run the test suite with:
 
-Callable signatures omit their bodies, and variable signatures omit their
-initializers. String and compound parameter defaults are replaced with `...`.
-Bounded docstrings and comments,
-identifiers, paths, type annotations, and other retained text can still contain
-sensitive information. Treat extracted metadata as potentially confidential and
-apply the repository's access permissions when storing, retrieving, or sharing it.
+```powershell
+python -m pytest -q
+```
 
-## Project structure
+Tests cover chunking, repository-file ingestion, symbol extraction, symbol
+indexing, and import/callability smoke checks. In the current checkout,
+`tests/test_scaffold.py` imports node modules that are not present under
+`app/nodes/`, so full-suite collection fails until those imports and the
+available implementation are brought back into sync.
 
-- `app/main.py` — CLI argument handling and review entry point.
-- `app/graph.py` — LangGraph workflow, tool-call routing, and call budget.
-- `app/agent.py` — model prompt, Hugging Face inference request, and response
-  conversion.
-- `app/nodes/` — review, finalization, validation, budget handling, and location
-  verification nodes.
-- `app/services/github_client.py` — GitHub API requests, source-line fetching,
-  and unified-diff location checks.
-- `app/services/pr_normalizer.py` — converts GitHub API data to the internal PR
-  context and review prompt.
-- `app/rag/` — language-aware code chunking with bounded text fallback.
+## Project layout
+
+- `app/main.py` — command-line arguments and review entry point.
+- `app/graph.py` — LangGraph construction, tool routing, budget handling, and
+  review execution.
+- `app/agent.py` — model prompts, Hugging Face inference, tool schemas, and
+  response conversion.
+- `app/nodes/` — model invocation, response validation, budget handling, and
+  finding-location verification.
+- `app/services/github_client.py` — GitHub API access, source retrieval,
+  pagination, and unified-diff location checks.
+- `app/services/pr_normalizer.py` — PR context normalization and prompt
+  formatting.
+- `app/models/pr_model.py` — typed PR and changed-file context.
 - `app/schemas.py` — Pydantic finding and review-result schemas.
-- `app/state.py` — graph state types.
-- `app/tools/fetch_file_tool.py` — bounded source-context tool exposed to the
-  model.
-- `tests/` — project tests.
+- `app/state.py` and `app/context.py` — graph state and runtime context types.
+- `app/rag/` — symbol extraction, BM25 search, and code chunking utilities.
+- `app/tools/` — model-callable source-context and symbol-search tools.
+- `tests/` — automated tests.
+- `requirements.txt` — Python dependencies.
