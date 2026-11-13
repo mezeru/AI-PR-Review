@@ -304,7 +304,7 @@ def process_payment(amount):
     # Return {
     #   "file": "src/utils/agent.py",
     #   "line": 42,
-    #   "severity": "Critical",
+    #   "severity": "critical",
     #   "category": "security",
     #   "explanation": "Potential Comprised Model vulnerability identified",
     #   "evidence": "This Model has been listed in a data-breach"
