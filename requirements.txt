@@ -7,5 +7,4 @@ tree-sitter-language-pack
 python-dotenv
 huggingface_hub
 pytest
-
-# Later, select one model provider integration, for example: langchain-openai
+rank-bm25

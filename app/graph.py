@@ -14,13 +14,15 @@ from app.nodes.verify_findings import verify_findings
 from langchain_core.messages import ToolMessage
 from typing import Literal
 from app.nodes.tool_budget_exhaust import tool_budget_exhausted
+from app.tools.rag_check import search_codebase
+from app.context import ReviewContext
 
 load_dotenv()
 
 langfuse = get_client()
 langfuse_handler = CallbackHandler()
 
-MAX_TOOL_CALLS = 5
+MAX_TOOL_CALLS = 10
 
 def count_tool_calls(state: ReviewState) -> int:
     return sum(
@@ -60,9 +62,10 @@ def build_graph():
     Implement graph construction and routing as a learning exercise.
     """
 
-    tools = [get_file_context]
+    tools = [get_file_context, search_codebase]
 
-    graph = StateGraph(ReviewState)
+    graph = StateGraph(ReviewState,
+                       context_schema=ReviewContext)
     graph.add_node("review_code", review_agent)
     graph.add_node("normalise_final",normalise_final )
     graph.add_node("validate_findings", validate_findings)
@@ -92,7 +95,7 @@ def build_graph():
 
     return graph.compile()
 
-def run_review(pr_url, normalized_pr):
+def run_review(pr_url, normalized_pr, index):
     initial_state = {
         "pr_url": pr_url,
         "pr_context": normalized_pr,
@@ -106,9 +109,9 @@ def run_review(pr_url, normalized_pr):
     graph = build_graph()
 
     try:
-        result = graph.invoke(initial_state, config={
+        result = graph.invoke(initial_state, context=ReviewContext(symbol_index=index) ,config={
             "callbacks": [langfuse_handler],
-            "recursion_limit": 20
+            "recursion_limit": 35
         })
 
         return result

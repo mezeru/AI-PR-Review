@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from app.graph import run_review
 from app.services.github_client import consolidate_pr_data
 from app.services.pr_normalizer import normalize_pr_data
+from app.rag.repository_index import build_pr_symbol_index
 
 
 from app.services.github_client import fetch_file_lines
@@ -31,7 +32,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         raw = consolidate_pr_data(pr_url)
         normalized = normalize_pr_data(raw)
-        result = run_review(pr_url, normalized)
+        index = build_pr_symbol_index(pr_url, normalized)
+        result = run_review(pr_url, normalized, index)
     except (ValueError, RuntimeError) as exc:
         print(f"Review failed: {exc}", file=sys.stderr)
         return 1
