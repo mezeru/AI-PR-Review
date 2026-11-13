@@ -93,7 +93,7 @@ Return ONLY a JSON object with this exact structure:
     {
       "file": "app/example.py",
       "line": 42,
-      "severity": "High",
+      "severity": "high",
       "category": "correctness",
       "explanation": "Explain the actual incorrect behavior.",
       "evidence": "Describe a concrete triggering scenario.",
@@ -108,7 +108,7 @@ Rules:
 - file, line, severity, category, explanation,
   evidence, and suggested_fix must be at the same level.
 - line can be null if unknown.
-- severity: Critical, High, Medium, Low.
+- severity: critical, high, medium, low.
 - category: correctness, security, performance, reliability.
 - Do not use 'type', 'description', 'details', or 'fix'.
 - Do not report speculative bugs.

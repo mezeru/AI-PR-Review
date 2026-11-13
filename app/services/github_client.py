@@ -380,7 +380,7 @@ def verify_finding_location(
         filename = finding.get("filename")
         line = finding.get("line")
     else:
-        filename = finding.filename
+        filename = finding.file
         line = finding.line
 
     # Validate inputs
